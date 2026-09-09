@@ -19,6 +19,30 @@ function (@main)(args::Vector{String})::Cint
     Timestamp{Microsecond}(floor(ts, Microsecond)) < ts || return 12
     DateTime(ts) == DateTime(2026, 8, 31, 13, 45, 30, 123) || return 13
     hash(ts) == hash(Timestamp(2026, 8, 31, 13, 45, 30, 123, 456, 789)) || return 14
+    # the constructor's error paths: their messages must compile under --trim=safe (the
+    # parts are not constants, so the calls are not folded into unconditional throws)
+    n = length(args)
+    try
+        Timestamp(2026, 2, 30 + n)
+        return 15
+    catch e
+        e isa ArgumentError || return 16
+        (e.msg::String) == "Day: 30 out of range (1:28)" || return 17
+    end
+    try
+        Timestamp{Nanosecond}(1677, 9, 21 + n)
+        return 18
+    catch e
+        e isa ArgumentError || return 19
+        (e.msg::String) == "Timestamp: 1677-9-21 out of range for Timestamp{Nanosecond} (1677-9-21 to 2262-4-11)" || return 20
+    end
+    try
+        Timestamp{Second}(2026, 1, 1, 0, 0, 0, 500 + n)
+        return 21
+    catch e
+        e isa ArgumentError || return 22
+        (e.msg::String) == "Fractional second is not exactly representable as Timestamp{Second}" || return 23
+    end
     Core.println("trim workload passed")
     return 0
 end

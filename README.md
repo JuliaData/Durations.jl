@@ -123,3 +123,10 @@ Differences on Julia versions that use the compatibility implementation:
   defines them (Julia 1.13 and later).
 - Parsing a negative year, which only `Timestamp{Second}`, `Timestamp{Millisecond}`,
   and `Timestamp{Microsecond}` can represent, requires the Julia 1.12 Dates parser.
+
+## Arrow interoperability
+
+With Arrow.jl loaded, a `Timestamp{P}` column is written as Arrow's own timestamp type
+at unit `P` (seconds, milliseconds, microseconds, or nanoseconds; no time zone), tagged
+with the extension name `JuliaLang.Durations.Timestamp` so that it reads back as
+`Timestamp{P}`. A reader without Durations loaded sees a plain Arrow timestamp column.
