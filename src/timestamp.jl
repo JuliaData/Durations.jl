@@ -106,7 +106,7 @@ end
 function Dates.validargs(::Type{Timestamp{P}}, y::Int64, m::Int64, d::Int64, h::Int64, mi::Int64,
                          s::Int64, ms::Int64, us::Int64, ns::Int64, ampm::Dates.AMPM=Dates.TWENTYFOURHOUR) where {P}
     year(typemin(Timestamp{P})) <= y <= year(typemax(Timestamp{P})) ||
-        return ArgumentError("Year: $y out of range for Timestamp{$P}")
+        return ArgumentError("Year: $y out of range for Timestamp{$(nameof(P))}")
     0 < m < 13 || return ArgumentError("Month: $m out of range (1:12)")
     0 < d < Dates.daysinmonth(y, m) + 1 || return ArgumentError("Day: $d out of range (1:$(Dates.daysinmonth(y, m)))")
     if ampm == Dates.TWENTYFOURHOUR # 24-hour clock
@@ -125,12 +125,24 @@ function Dates.validargs(::Type{Timestamp{P}}, y::Int64, m::Int64, d::Int64, h::
     epochdays = Dates.totaldays(y, m, d) - UNIXEPOCHDAYS
     nsofday = ns + 1000us + 1000000ms + 1000000000 * (s + 60mi + 3600 * Dates.adjusthour(h, ampm))
     ticks, remainder = divrem(nsofday, timestamp_scale(P))
-    iszero(remainder) || return ArgumentError("Fractional second is not exactly representable as Timestamp{$P}")
+    iszero(remainder) || return ArgumentError("Fractional second is not exactly representable as Timestamp{$(nameof(P))}")
     fldmod(typemin(Int64), timestamp_ticks_per_day(P)) <= (epochdays, ticks) <=
         fldmod(typemax(Int64), timestamp_ticks_per_day(P)) ||
-        return ArgumentError("Timestamp: $y-$m-$d out of range ($(typemin(Timestamp{P})) to $(typemax(Timestamp{P})))")
+        return timestamp_range_error(P, y, m, d)
     return nothing
 end
+
+# The messages name the resolution and the bounds with plain integers and symbols, in
+# short `string` calls: interpolating a `Timestamp` or a type prints through dynamic
+# dispatch, and a `string` of more than about ten pieces is compiled with `Vararg{Any}`;
+# a `--trim=safe` build rejects both.
+@noinline function timestamp_range_error(::Type{P}, y::Int64, m::Int64, d::Int64) where {P}
+    lo, hi = typemin(Timestamp{P}), typemax(Timestamp{P})
+    return ArgumentError(string("Timestamp: ", ymd(y, m, d), " out of range for Timestamp{", nameof(P), "} (", ymd(lo), " to ", ymd(hi), ")"))
+end
+
+ymd(y::Int64, m::Int64, d::Int64) = string(y, '-', m, '-', d)
+ymd(ts::Timestamp) = ymd(Dates.year(ts), Dates.month(ts), Dates.day(ts))
 
 Dates.validargs(::Type{Timestamp}, args...) = Dates.validargs(Timestamp{Nanosecond}, args...)
 

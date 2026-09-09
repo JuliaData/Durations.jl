@@ -1,11 +1,18 @@
 name = "Durations"
 uuid = "41ac09f5-0a95-4810-aa18-c88bf48ee130"
 authors = ["Jacob Quinn <quinn.jacobd@gmail.com>"]
-version = "1.1.0"
+version = "1.2.0"
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 
+[weakdeps]
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+
+[extensions]
+DurationsArrowExt = "Arrow"
+
 [compat]
+Arrow = "2.8"
 Dates = "1"
 julia = "1.10"

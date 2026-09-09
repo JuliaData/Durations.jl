@@ -68,3 +68,4 @@ using Dates: CompoundPeriod
 end
 
 include("timestamps.jl")
+include("arrow.jl")
