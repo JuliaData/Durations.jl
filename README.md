@@ -65,4 +65,61 @@ julia --project=test/trim test/trim/runtests.jl
 
 CI covers Julia 1.10, 1.11, current stable, and nightly on Linux, Windows, and
 macOS. Trim CI compiles and executes a JuliaC `--trim=safe` workload. Tests check
-layout, byte round trips, overflow, mixed signs, Dates conversions, and hashing.
+layout, byte round trips, overflow, mixed signs, Dates conversions, and hashing,
+and run the Dates stdlib's `Timestamp` test file against whichever
+implementation is active.
+
+## Timestamp
+
+`Timestamp{P}` is a point in time stored as an `Int64` count since the Unix
+epoch `1970-01-01T00:00:00`, with `P` one of `Second`, `Millisecond`,
+`Microsecond`, or `Nanosecond`. It is the type proposed for the Julia 1.14
+Dates stdlib in [JuliaLang/julia#62994](https://github.com/JuliaLang/julia/pull/62994).
+Durations makes it available to packages on earlier Julia versions:
+
+- When the Dates stdlib defines `Timestamp`, `Durations.Timestamp` is
+  `Dates.Timestamp` itself, and `Durations.unix2timestamp`,
+  `Durations.timestamp2unix`, and `Durations.ISOTimestampFormat` are the Dates
+  bindings.
+- Otherwise Durations supplies a compatible implementation with the same
+  constructors, accessors, conversions, promotion, comparison, arithmetic,
+  rounding, adjusters, ranges, parsing, and formatting.
+  `Durations.TIMESTAMP_FROM_DATES` reports which case applies.
+
+```julia
+using Durations, Dates
+
+ts = Timestamp(2026, 8, 31, 13, 45, 30, 123, 456, 789)   # Timestamp{Nanosecond}
+@assert string(ts) == "2026-08-31T13:45:30.123456789"
+@assert Timestamp(string(ts)) == ts
+@assert Timestamp{Microsecond}("2026-08-31T13:45:30.123456") < ts
+@assert ts - DateTime(2026, 8, 31, 13, 45, 30, 123) == Nanosecond(456789)
+@assert floor(ts, Minute(15)) == Timestamp(2026, 8, 31, 13, 45)
+@assert reinterpret(Int64, [Timestamp(1970)]) == [0]      # Arrow timestamp[ns] layout
+@assert Timestamp{Second}(Dates.UTInstant(Second(86400))) == Date(1970, 1, 2)
+```
+
+Plain `Timestamp(...)` means `Timestamp{Nanosecond}`, which covers 1677 through
+2262. Coarser resolutions cover wider ranges. Conversions between resolutions,
+period arithmetic, and rounding require exact representation and throw an
+`InexactError` otherwise; `+` and `-` wrap at the ends of the `Int64` range like
+`DateTime`. Use a concrete `Timestamp{P}` for array element types and struct
+fields.
+
+Differences on Julia versions that use the compatibility implementation:
+
+- Loading Durations registers the `n` fractional-second format code with
+  Dates. A `DateFormat` that used a literal `n` as a separator must escape it as
+  `\n`. `n` parses and formats `Timestamp`, and formats `DateTime` and `Time`.
+  Parsing a `DateTime` or `Time` with `n` is unreliable before Julia 1.14: a
+  `DateTime` format drops the fraction and a `Time` rejects sub-millisecond
+  digits. Parse a `Timestamp` and convert instead.
+- `hash` agrees with `==` between `Timestamp` and `DateTime`, and across
+  `Timestamp` resolutions. Equal `Date` and `Timestamp` values hash differently,
+  as equal `Date` and `DateTime` values already do on these versions.
+- `now(Timestamp)` reads the system clock through `clock_gettime` on POSIX and
+  `GetSystemTimePreciseAsFileTime` on Windows.
+- `Dates.isoyear` and `Dates.isoweekdate` accept a `Timestamp` only where Dates
+  defines them (Julia 1.13 and later).
+- Parsing a negative year, which only `Timestamp{Second}`, `Timestamp{Millisecond}`,
+  and `Timestamp{Microsecond}` can represent, requires the Julia 1.12 Dates parser.
