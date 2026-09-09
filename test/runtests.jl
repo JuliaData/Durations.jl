@@ -66,3 +66,5 @@ using Dates: CompoundPeriod
     end
     @test isempty(Test.detect_ambiguities(Durations, Dates; recursive=true))
 end
+
+include("timestamps.jl")

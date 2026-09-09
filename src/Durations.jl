@@ -3,12 +3,17 @@
 
 Fixed-width calendar intervals with independent month, day, and nanosecond
 components. `Duration` matches Arrow's 16-byte MONTH_DAY_NANO interval layout.
+
+The package also provides `Timestamp{P}`, an `Int64` count since the Unix epoch
+at second, millisecond, microsecond, or nanosecond resolution. On Julia versions
+whose `Dates` stdlib defines `Timestamp`, `Durations.Timestamp` is that type;
+on earlier versions Durations supplies a compatible implementation.
 """
 module Durations
 
 import Dates
 
-export Duration
+export Duration, Timestamp
 
 """
     Duration(months::Integer, days::Integer, nanoseconds::Integer)
@@ -108,5 +113,29 @@ function Dates.CompoundPeriod(x::Duration)
 end
 
 Base.convert(::Type{Dates.CompoundPeriod}, x::Duration) = Dates.CompoundPeriod(x)
+
+# `Timestamp{P}`: use the Dates stdlib definition when it exists (Julia 1.14
+# and later, JuliaLang/julia#62994), otherwise provide a compatible one.
+"""
+    Durations.TIMESTAMP_FROM_DATES
+
+`true` when `Durations.Timestamp` is the `Dates` stdlib type, `false` when
+Durations supplies the compatibility implementation.
+"""
+const TIMESTAMP_FROM_DATES = isdefined(Dates, :Timestamp)
+
+@static if TIMESTAMP_FROM_DATES
+    const Timestamp = Dates.Timestamp
+    const ISOTimestampFormat = Dates.ISOTimestampFormat
+    const unix2timestamp = Dates.unix2timestamp
+    const timestamp2unix = Dates.timestamp2unix
+else
+    include("timestamp.jl")
+    __init__() = register_dates_hooks!()
+end
+
+@static if VERSION >= v"1.11"
+    eval(Expr(:public, :ISOTimestampFormat, :unix2timestamp, :timestamp2unix, :TIMESTAMP_FROM_DATES))
+end
 
 end
