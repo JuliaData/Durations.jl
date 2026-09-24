@@ -146,3 +146,56 @@ These helpers are internal and may change with the Dates proposal. The four
 built-in resolutions keep their existing representation and behavior. The
 [sub-nanosecond prototype](https://github.com/JuliaData/Durations.jl/pull/4)
 demonstrates package-defined picoseconds, femtoseconds, and attoseconds.
+
+## Sub-nanosecond prototype
+
+This branch demonstrates package-defined resolutions for `Timestamp{P}`.
+Load [the example](examples/subnanosecond.jl) explicitly; it adds no exports
+or runtime dependencies to Durations.
+
+```julia
+using Dates, Durations
+include("examples/subnanosecond.jl")
+using .Subnanosecond: Picosecond, Femtosecond, Attosecond
+
+t = Timestamp{Picosecond}(2026, 9, 24)
+x = t + Picosecond(1)
+@assert string(x) == "2026-09-24T00:00:00.000000000001"
+@assert x - t == Picosecond(1)
+@assert floor(x, Nanosecond) == t
+@assert ceil(x, Nanosecond) == t + Nanosecond(1)
+@assert x + Month(1) == Timestamp{Picosecond}(2026, 10, 24) + Picosecond(1)
+
+f = Timestamp{Femtosecond}(x) + Femtosecond(1)
+@assert f - x == Femtosecond(1)
+@assert Timestamp{Attosecond}(f) == f
+@assert sizeof(x) == 16
+@assert Dates.value(x) isa Int128
+@assert collect(t:Picosecond(1):t+Picosecond(2)) == [t, x, t+Picosecond(2)]
+```
+
+Each period is a 128-bit primitive type containing an Int128 count.
+`Timestamp{P}` still contains only `UTInstant{P}`. The example supplies the
+period's value, limits, scale in nanoseconds, and fractional display. Existing
+timestamp code supplies construction, exact conversions, comparison, hashing,
+arithmetic, rounding, and ranges. Converting `x` above to
+`Timestamp{Nanosecond}` throws `InexactError`; round first to discard precision.
+Add custom periods with `+`, or use `convert(Timestamp{P}, P(count))` for raw
+epoch counts. The calendar-parts constructor rejects unsupported period parts.
+
+The shared changes admit custom TimePeriod types, read counts through
+`Dates.value`, obtain count limits from the period, and accept fractional scales.
+The four built-in resolutions retain Int64 storage and their existing behavior.
+The example uses BigInt rational intermediates to keep endpoint calculations
+exact and the implementation short. This is a design demonstration, not a
+performance claim or a stable extension API.
+
+The example works with either Durations' compatibility Timestamp or the Dates
+Timestamp with the shared extension helpers. It formats 12/15/18 fractional digits;
+parsing beyond nine digits is not implemented. `repr` uses an exact raw-count
+constructor. Date/DateTime/Time conversions retain their destination range and
+precision limits. Arrow's native timestamp units stop at nanoseconds; this
+prototype does not add a sub-nanosecond wire format.
+
+Run the example checks with `julia --project test/subnanosecond.jl`, or run the
+complete package suite normally. No release or version bump is proposed.
