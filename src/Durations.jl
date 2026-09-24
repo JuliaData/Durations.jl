@@ -4,8 +4,9 @@
 Fixed-width calendar intervals with independent month, day, and nanosecond
 components. `Duration` matches Arrow's 16-byte MONTH_DAY_NANO interval layout.
 
-The package also provides `Timestamp{P}`, an `Int64` count since the Unix epoch
-at second, millisecond, microsecond, or nanosecond resolution. On Julia versions
+The package also provides `Timestamp{P}`. Its built-in resolutions store an
+`Int64` count since the Unix epoch in seconds, milliseconds, microseconds, or
+nanoseconds; packages can define periods with other counts and resolutions. On Julia versions
 whose `Dates` stdlib defines `Timestamp`, `Durations.Timestamp` is that type;
 on earlier versions Durations supplies a compatible implementation.
 """
