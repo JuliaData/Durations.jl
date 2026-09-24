@@ -9,6 +9,7 @@ The package also provides `Timestamp{P}`. Its built-in resolutions store an
 nanoseconds; packages can define periods with other counts and resolutions. On Julia versions
 whose `Dates` stdlib defines `Timestamp`, `Durations.Timestamp` is that type;
 on earlier versions Durations supplies a compatible implementation.
+`Durations.ZonedTimestamp{P,Z}` is a UTC `Timestamp{P}` in the time zone named `Z`.
 """
 module Durations
 
@@ -135,8 +136,11 @@ else
     __init__() = register_dates_hooks!()
 end
 
+include("zoned.jl")
+
 @static if VERSION >= v"1.11"
-    eval(Expr(:public, :ISOTimestampFormat, :unix2timestamp, :timestamp2unix, :TIMESTAMP_FROM_DATES))
+    eval(Expr(:public, :ISOTimestampFormat, :unix2timestamp, :timestamp2unix, :TIMESTAMP_FROM_DATES,
+              :ZonedTimestamp, :zonename, :astimezone, :NonExistentTimeError, :AmbiguousTimeError))
 end
 
 end

@@ -124,12 +124,60 @@ Differences on Julia versions that use the compatibility implementation:
 - Parsing a negative year, which only `Timestamp{Second}`, `Timestamp{Millisecond}`,
   and `Timestamp{Microsecond}` can represent, requires the Julia 1.12 Dates parser.
 
+## ZonedTimestamp
+
+`Durations.ZonedTimestamp{P,Z}` is a point in time in a time zone. Its one field,
+`utc::Timestamp{P}`, holds the time in UTC. The `Symbol` type parameter `Z` names the zone
+exactly as Arrow writes it: `:UTC`, `Symbol("+07:30")`, or `Symbol("America/Denver")`.
+
+```julia
+using Durations, Dates
+
+const Jakarta = Durations.ZonedTimestamp{Nanosecond, Symbol("+07:00")}
+zt = Jakarta(Timestamp(2026, 3, 8, 16, 0))                # 16:00 local time
+@assert Timestamp(zt, UTC) == Timestamp(2026, 3, 8, 9, 0)  # the stored UTC time
+@assert hour(zt) == 16 && zt + Day(1) == zt + Hour(24)
+@assert string(zt) == "2026-03-08T16:00:00+07:00[+07:00]"
+@assert reinterpret(Jakarta, [Dates.value(zt.utc)]) == [zt]  # an Arrow buffer, in place
+```
+
+- `ZonedTimestamp{P,Z}` has the 8 bytes of its UTC `Timestamp{P}`, and every `Int64` is a
+  valid value. A buffer of an Arrow `timestamp` column with unit `P` and time zone
+  `String(Z)` reinterprets to `ZonedTimestamp{P,Z}` values and back.
+- `ZonedTimestamp{P,Z}(ts)` and the constructors by parts and from a `Date` read local
+  time. `ZonedTimestamp{P,Z}(ts, UTC)` reads UTC time. `Timestamp{P}(zt)`, `Date(zt)`,
+  `Time(zt)`, and `DateTime(zt)` give local time; `Timestamp{P}(zt, UTC)` gives UTC time.
+- Comparison, hashing, subtraction, and adding hours through nanoseconds use the UTC time,
+  so they work for every zone name. Equal times in different zones are equal and hash
+  alike. `Durations.astimezone(zt, zone)` changes the zone and keeps the time.
+- Local fields, adding days through years, rounding, and the `firstdayof...` adjusters
+  use the zone's rules. Durations knows `"UTC"` and `"+HH:MM"`/`"-HH:MM"` offsets. Loading
+  TimeZones.jl adds every name it knows, including aliases such as `"Etc/UTC"`. Without
+  rules, these operations throw and `print` shows the UTC time with a `Z` offset.
+- A local time that occurs twice throws `Durations.AmbiguousTimeError` unless
+  `occurrence=1` or `occurrence=2` picks one; a skipped local time throws
+  `Durations.NonExistentTimeError`. Adding a day or month can land on one.
+- `print` writes the local time, its offset, and the zone in brackets (RFC 9557), such as
+  `2026-11-01T01:30:00-07:00[America/Denver]`. The constructor parses that text; the offset
+  alone sets the UTC time.
+- Each zone is a separate Julia type, so the first use of a zone compiles its methods.
+  Local-time operations look up the zone's rules on each call; UTC operations do not.
+- The rules TimeZones.jl provides for zones with daylight saving time end in 2038.
+  Local-time operations after that throw.
+
+With TimeZones.jl loaded, `ZonedTimestamp(zdt)` converts a `ZonedDateTime` (as
+`ZonedTimestamp{Millisecond}`), `ZonedDateTime(zt)` converts back (floored to the
+millisecond), `astimezone` accepts either type of zone, and `ZonedTimestamp` and
+`ZonedDateTime` values compare and hash alike.
+
 ## Arrow interoperability
 
 With Arrow.jl loaded, a `Timestamp{P}` column is written as Arrow's own timestamp type
 at unit `P` (seconds, milliseconds, microseconds, or nanoseconds; no time zone), tagged
 with the extension name `JuliaLang.Durations.Timestamp` so that it reads back as
-`Timestamp{P}`. A reader without Durations loaded sees a plain Arrow timestamp column.
+`Timestamp{P}`. A `ZonedTimestamp{P,Z}` column is the same type with time zone `String(Z)`,
+tagged `JuliaLang.Durations.ZonedTimestamp`. A reader without Durations loaded sees a
+plain Arrow timestamp column.
 
 ## Package-defined Timestamp periods
 
