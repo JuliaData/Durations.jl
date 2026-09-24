@@ -1,7 +1,8 @@
 # Compatibility implementation of `Dates.Timestamp{P}` (JuliaLang/julia#62994) for
 # Julia versions whose Dates stdlib does not define it. `Durations.jl` includes
 # this file only when `Dates.Timestamp` is undefined; otherwise it re-exports the
-# stdlib type. Keep the semantics identical to the stdlib implementation.
+# stdlib type. Built-in resolutions retain the stdlib semantics; package-defined
+# periods can extend the private count and scale helpers.
 
 using Dates: Dates, AbstractDateTime, TimeType, Date, DateTime, Time, UTC,
     Period, DatePeriod, TimePeriod, FixedPeriod,
@@ -15,7 +16,9 @@ using Dates: Dates, AbstractDateTime, TimeType, Date, DateTime, Time, UTC,
 
 `Timestamp` represents a point in time according to the proleptic Gregorian
 calendar with resolution `P`, one of `Second`, `Millisecond`, `Microsecond`,
-or `Nanosecond`. Its value is an `Int64` count of units of `P` since the Unix
+or `Nanosecond` by default. Package-defined `TimePeriod` types can provide
+other resolutions through the private timestamp helpers. The built-in periods
+store an `Int64` count of units of `P` since the Unix
 epoch, `1970-01-01T00:00:00`. `Timestamp(args...)` defaults to `Timestamp{Nanosecond}`;
 `Timestamp(ts::Timestamp)` preserves the input's resolution. Use a concrete
 `Timestamp{P}` for array elements and struct fields of a known resolution.
@@ -47,13 +50,13 @@ For promotion with `DateTime`, its resolution is `Millisecond`.
 
 `Dates.value(ts)` is the raw count since the Unix epoch. `convert(P, ts)`
 returns that count as a period in units of `P`, requiring exact conversion;
-`P(ts)` instead returns the corresponding calendar component.
+for built-in periods, `P(ts)` instead returns the corresponding calendar component.
 
 This definition is provided by Durations.jl on Julia versions whose `Dates`
 stdlib lacks `Timestamp`. On later versions `Durations.Timestamp` is
 `Dates.Timestamp` itself.
 """
-struct Timestamp{P<:Union{Second,Millisecond,Microsecond,Nanosecond}} <: AbstractDateTime
+struct Timestamp{P<:TimePeriod} <: AbstractDateTime
     instant::UTInstant{P}
     Timestamp{P}(instant::UTInstant{P}) where {P} = new{P}(instant)
 end
@@ -65,6 +68,10 @@ Timestamp(ts::Timestamp) = ts
 const NS_PER_DAY = Int64(86400000000000)
 const UNIXEPOCHDAYS = Dates.totaldays(1970, 1, 1)
 
+# Period extensions supply a scale in nanoseconds and their own count storage.
+# A rational scale permits sub-nanosecond resolution without floating point.
+timestamp_count_type(::Type{P}) where {P} = typeof(value(zero(P)))
+timestamp_totaldays(::Type{P}, y, m, d) where {P} = Dates.totaldays(y, m, d)
 timestamp_scale(::Type{Second}) = Int64(1000000000)
 timestamp_scale(::Type{Millisecond}) = Int64(1000000)
 timestamp_scale(::Type{Microsecond}) = Int64(1000)
@@ -74,7 +81,7 @@ timestamp_ticks_per_day(::Type{P}) where {P} = NS_PER_DAY ÷ timestamp_scale(P)
 timestamp_finer(::Type{P}, ::Type{Q}) where {P,Q} =
     timestamp_scale(P) <= timestamp_scale(Q) ? P : Q
 
-function timestamp_ticks(::Type{P}, ns::Integer) where {P}
+function timestamp_ticks(::Type{P}, ns::Real) where {P}
     ticks, remainder = divrem(ns, timestamp_scale(P))
     iszero(remainder) || throw(InexactError(:convert, Timestamp{P}, ns))
     return ticks
@@ -100,7 +107,7 @@ function Timestamp{P}(y::Int64, m::Int64=1, d::Int64=1, h::Int64=0, mi::Int64=0,
     err === nothing || throw(err)
     h = Dates.adjusthour(h, ampm)
     nsofday = ns + 1000us + 1000000ms + 1000000000 * (s + 60mi + 3600h)
-    return timestamp_from_day(Timestamp{P}, Dates.totaldays(y, m, d), nsofday)
+    return timestamp_from_day(Timestamp{P}, timestamp_totaldays(P, y, m, d), nsofday)
 end
 
 function Dates.validargs(::Type{Timestamp{P}}, y::Int64, m::Int64, d::Int64, h::Int64, mi::Int64,
@@ -122,12 +129,12 @@ function Dates.validargs(::Type{Timestamp{P}}, y::Int64, m::Int64, d::Int64, h::
     -1 < ns < 1000000000 || return ArgumentError("Nanosecond: $ns out of range (0:999999999)")
     1000000ms + 1000us + ns < 1000000000 ||
         return ArgumentError("Sub-second parts must together be less than one second")
-    epochdays = Dates.totaldays(y, m, d) - UNIXEPOCHDAYS
+    epochdays = timestamp_totaldays(P, y, m, d) - UNIXEPOCHDAYS
     nsofday = ns + 1000us + 1000000ms + 1000000000 * (s + 60mi + 3600 * Dates.adjusthour(h, ampm))
     ticks, remainder = divrem(nsofday, timestamp_scale(P))
     iszero(remainder) || return ArgumentError("Fractional second is not exactly representable as Timestamp{$(nameof(P))}")
-    fldmod(typemin(Int64), timestamp_ticks_per_day(P)) <= (epochdays, ticks) <=
-        fldmod(typemax(Int64), timestamp_ticks_per_day(P)) ||
+    fldmod(value(typemin(P)), timestamp_ticks_per_day(P)) <= (epochdays, ticks) <=
+        fldmod(value(typemax(P)), timestamp_ticks_per_day(P)) ||
         return timestamp_range_error(P, y, m, d)
     return nothing
 end
@@ -141,7 +148,7 @@ end
     return ArgumentError(string("Timestamp: ", ymd(y, m, d), " out of range for Timestamp{", nameof(P), "} (", ymd(lo), " to ", ymd(hi), ")"))
 end
 
-ymd(y::Int64, m::Int64, d::Int64) = string(y, '-', m, '-', d)
+ymd(y, m, d) = string(y, '-', m, '-', d)
 ymd(ts::Timestamp) = ymd(Dates.year(ts), Dates.month(ts), Dates.day(ts))
 
 Dates.validargs(::Type{Timestamp}, args...) = Dates.validargs(Timestamp{Nanosecond}, args...)
@@ -165,6 +172,8 @@ function Timestamp{P}(period::Period, periods::Period...) where {P}
     h = Hour(0); mi = Minute(0); s = Second(0)
     ms = Millisecond(0); us = Microsecond(0); ns = Nanosecond(0)
     for p in (period, periods...)
+        p isa Union{Year,Month,Day,Hour,Minute,Second,Millisecond,Microsecond,Nanosecond} ||
+            throw(ArgumentError("unsupported timestamp part; add custom periods with +"))
         isa(p, Year) && (y = p::Year)
         isa(p, Month) && (m = p::Month)
         isa(p, Day) && (d = p::Day)
@@ -190,7 +199,7 @@ function Timestamp{P}(d::Date, t::Time=Time(0)) where {P}
     ticks, remainder = divrem(value(t), timestamp_scale(P))
     iszero(remainder) || throw(InexactError(:convert, Timestamp{P}, t))
     epochdays = Int128(value(d)) - UNIXEPOCHDAYS
-    typemin(Int64) <= epochdays * timestamp_ticks_per_day(P) + ticks <= typemax(Int64) ||
+    value(typemin(P)) <= epochdays * timestamp_ticks_per_day(P) + ticks <= value(typemax(P)) ||
         throw(ArgumentError("Date out of range for Timestamp{$P}"))
     return timestamp_from_day(Timestamp{P}, value(d), value(t))
 end
@@ -202,6 +211,7 @@ Timestamp{P}(y, m=1, d=1, h=0, mi=0, s=0, ms=0, us=0, ns=0, ampm::Dates.AMPM=Dat
 ### Traits, equality, hashing
 
 Dates.calendar(dt::Timestamp) = Dates.ISOCalendar
+Dates.value(dt::Timestamp) = value(dt.instant.periods)
 
 Base.eps(::Type{Timestamp}) = Nanosecond(1)
 Base.eps(::Type{Timestamp{P}}) where {P} = P(1)
@@ -209,10 +219,10 @@ Base.zero(::Type{Timestamp}) = Nanosecond(0)
 Base.zero(::Type{Timestamp{P}}) where {P} = P(0)
 
 Base.typemax(::Type{Timestamp}) = typemax(Timestamp{Nanosecond})
-Base.typemax(::Type{Timestamp{P}}) where {P} = Timestamp{P}(UTInstant(P(typemax(Int64))))
+Base.typemax(::Type{Timestamp{P}}) where {P} = Timestamp{P}(UTInstant(typemax(P)))
 Base.typemax(x::Timestamp) = typemax(typeof(x))
 Base.typemin(::Type{Timestamp}) = typemin(Timestamp{Nanosecond})
-Base.typemin(::Type{Timestamp{P}}) where {P} = Timestamp{P}(UTInstant(P(typemin(Int64))))
+Base.typemin(::Type{Timestamp{P}}) where {P} = Timestamp{P}(UTInstant(typemin(P)))
 Base.typemin(x::Timestamp) = typemin(typeof(x))
 
 Base.promote_rule(::Type{Date}, ::Type{Timestamp{P}}) where {P} = Timestamp{P}
@@ -247,7 +257,7 @@ const DATETIME_DAY_LIMIT = typemax(Int64) ÷ 86400000 - 1
 function Base.hash(x::Timestamp, h::UInt)
     d, ns = days(x), nsofday(x)
     if iszero(ns % 1000000) && -DATETIME_DAY_LIMIT <= d <= DATETIME_DAY_LIMIT
-        return hash(DateTime(Dates.UTM(d * 86400000 + ns ÷ 1000000)), h)
+        return hash(DateTime(Dates.UTM(Int64(d * 86400000 + ns ÷ 1000000))), h)
     end
     return hash(ns, hash(d, hash(:Timestamp, h)))
 end
@@ -324,9 +334,9 @@ Dates.Time(dt::Timestamp) = convert(Time, dt)
 
 # Raw Unix counts, rather than calendar components.
 Base.convert(::Type{Timestamp}, x::Nanosecond) = Timestamp(UTInstant(x))
-Base.convert(::Type{P}, dt::Timestamp{Q}) where {P<:Union{Second,Millisecond,Microsecond,Nanosecond},Q} =
+Base.convert(::Type{P}, dt::Timestamp{Q}) where {P<:TimePeriod,Q} =
     P(timestamp_ticks(P, Int128(value(dt)) * timestamp_scale(Q)))
-Base.convert(::Type{Timestamp{P}}, x::Q) where {P,Q<:Union{Second,Millisecond,Microsecond,Nanosecond}} =
+Base.convert(::Type{Timestamp{P}}, x::Q) where {P,Q<:TimePeriod} =
     Timestamp{P}(UTInstant(P(timestamp_ticks(P, Int128(value(x)) * timestamp_scale(Q)))))
 
 """
@@ -344,12 +354,12 @@ required.
 unix2timestamp(x::Real) = unix2timestamp(Timestamp{Nanosecond}, x)
 unix2timestamp(::Type{Timestamp}, x::Real) = unix2timestamp(Timestamp{Nanosecond}, x)
 unix2timestamp(::Type{Timestamp{P}}, x::Real) where {P} =
-    Timestamp{P}(UTInstant(P(trunc(Int64, (1000000000 ÷ timestamp_scale(P)) * x))))
+    Timestamp{P}(UTInstant(P(trunc(timestamp_count_type(P), (1000000000 ÷ timestamp_scale(P)) * x))))
 function unix2timestamp(::Type{Timestamp{P}}, x::Integer) where {P}
     scale = 1000000000 ÷ timestamp_scale(P)
-    cld(typemin(Int64), scale) <= x <= fld(typemax(Int64), scale) ||
+    cld(value(typemin(P)), scale) <= x <= fld(value(typemax(P)), scale) ||
         throw(InexactError(:unix2timestamp, Timestamp{P}, x))
-    return Timestamp{P}(UTInstant(P(Int64(x) * scale)))
+    return Timestamp{P}(UTInstant(P(timestamp_count_type(P)(x) * scale)))
 end
 
 """
@@ -360,7 +370,7 @@ epoch `1970-01-01T00:00:00` as a `Float64`. Note that the returned value
 carries only about microsecond precision near the present; `Dates.value(dt)`
 is the exact count in the timestamp's resolution since the unix epoch.
 """
-timestamp2unix(dt::Timestamp{P}) where {P} = value(dt) / (1000000000 ÷ timestamp_scale(P))
+timestamp2unix(dt::Timestamp{P}) where {P} = Float64(value(dt) / (1000000000 ÷ timestamp_scale(P)))
 
 # Wall clock as (seconds, nanoseconds) since the Unix epoch. The stdlib uses
 # libuv's uv_clock_gettime, which older bundled libuv builds do not export.
@@ -420,7 +430,7 @@ end
 ### Arithmetic
 
 # Fixed-duration arithmetic preserves resolution and wraps in units of P.
-function timestamp_period_ticks(::Type{P}, y::FixedPeriod) where {P}
+function timestamp_period_ticks(::Type{P}, y::Union{FixedPeriod,TimePeriod}) where {P}
     unit, scale = Dates.tons(oneunit(y)), timestamp_scale(P)
     unit >= scale && return value(y) * (unit ÷ scale)
     ticks, remainder = divrem(value(y), scale ÷ unit)
@@ -431,9 +441,9 @@ for op in (:+, :-)
     @eval begin
         Base.$op(x::Timestamp{P}, y::Union{Year,Quarter,Month}) where {P} =
             Timestamp{P}(UTInstant(P(((Int128(value(Base.$op(Date(x), y))) - UNIXEPOCHDAYS) *
-                timestamp_ticks_per_day(P) + nsofday(x) ÷ timestamp_scale(P)) % Int64)))
-        Base.$op(x::Timestamp{P}, y::FixedPeriod) where {P} =
-            Timestamp{P}(UTInstant(P(Base.$op(value(x), timestamp_period_ticks(P, y)))))
+                timestamp_ticks_per_day(P) + nsofday(x) ÷ timestamp_scale(P)) % timestamp_count_type(P))))
+        Base.$op(x::Timestamp{P}, y::Union{FixedPeriod,TimePeriod}) where {P} =
+            Timestamp{P}(UTInstant(P(Base.$op(value(x), timestamp_period_ticks(P, y)) % timestamp_count_type(P))))
     end
 end
 
@@ -442,9 +452,9 @@ end
 # Keep rounding candidates wide; only the requested result must fit.
 function timestamp_rounding_value(dt::Timestamp{P}, ns, op::Symbol) where {P}
     ticks, remainder = divrem(ns, timestamp_scale(P))
-    iszero(remainder) && typemin(Int64) <= ticks <= typemax(Int64) ||
+    iszero(remainder) && value(typemin(P)) <= ticks <= value(typemax(P)) ||
         throw(InexactError(op, Timestamp{P}, dt))
-    return Timestamp{P}(UTInstant(P(Int64(ticks))))
+    return Timestamp{P}(UTInstant(P(ticks)))
 end
 
 # Ordinary calendar years use Int64 arithmetic. Large rounding intervals can
@@ -473,15 +483,13 @@ end
     y, m = yearmonth(dt)
     months = 12y + m - 1
     step = Int128(value(p)) * (p isa Year ? 12 : p isa Quarter ? 3 : 1)
-    # Timestamp month counts have magnitude below 4e12. If step fits Int64,
-    # the adjacent multiples fit too; Year and Quarter can require a wider step.
     if step <= typemax(Int64)
         return timestamp_month_bounds(dt, months, Int64(step), upper)
     end
     return timestamp_month_bounds(dt, Int128(months), step, upper)
 end
 
-@inline function timestamp_rounding_bounds(dt::Timestamp, p::FixedPeriod, upper::Bool)
+@inline function timestamp_rounding_bounds(dt::Timestamp, p::Union{FixedPeriod,TimePeriod}, upper::Bool)
     value(p) < 1 && throw(DomainError(p))
     epoch = p isa Week ? Dates.WEEKEPOCH : Dates.DATEEPOCH
     epochns = Int128(UNIXEPOCHDAYS - epoch) * NS_PER_DAY

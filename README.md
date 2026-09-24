@@ -130,3 +130,19 @@ With Arrow.jl loaded, a `Timestamp{P}` column is written as Arrow's own timestam
 at unit `P` (seconds, milliseconds, microseconds, or nanoseconds; no time zone), tagged
 with the extension name `JuliaLang.Durations.Timestamp` so that it reads back as
 `Timestamp{P}`. A reader without Durations loaded sees a plain Arrow timestamp column.
+
+## Package-defined Timestamp periods
+
+Packages can extend `Timestamp{P}` with a `Dates.TimePeriod` that stores its own
+count, including a primitive Int128 period. The internal helpers obtain the count
+through `Dates.value`, its bounds through `typemin`/`typemax`, and its exact scale
+in nanoseconds through `timestamp_scale(P)`. A rational scale supports units finer
+than a nanosecond. Wider calendar calculations can specialize
+`timestamp_totaldays(P, y, m, d)`. Fractional formatting and parsing are separate
+extensions. Add custom periods with `+` or use `convert(Timestamp{P}, P(count))`
+for raw epoch counts; unsupported calendar parts throw instead of being ignored.
+
+These helpers are internal and may change with the Dates proposal. The four
+built-in resolutions keep their existing representation and behavior. The
+[sub-nanosecond prototype](https://github.com/JuliaData/Durations.jl/pull/4)
+demonstrates package-defined picoseconds, femtoseconds, and attoseconds.
