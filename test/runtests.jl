@@ -69,3 +69,5 @@ end
 
 include("timestamps.jl")
 include("arrow.jl")
+
+include("subnanosecond.jl")
