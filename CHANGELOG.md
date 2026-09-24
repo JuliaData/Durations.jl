@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+
+Allow `Timestamp{P}` to use package-defined `Dates.TimePeriod` types, including
+primitive periods with `Int128` counts and sub-nanosecond resolutions. Preserve
+the count width in construction, conversion, arithmetic, and rounding. The
+extension helpers are internal APIs; the built-in resolutions keep their
+existing behavior. Sub-nanosecond period types are not included in this package.
+
 ## 1.1.0
 
 Add `Timestamp{P}`, an `Int64` count since the Unix epoch at `Second`,
