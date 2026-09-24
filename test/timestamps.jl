@@ -69,7 +69,11 @@ end
     # the messages name the resolution and bounds without printing a Timestamp or a type
     errmsg(f) = try; f(); ""; catch e; e.msg; end
     @test errmsg(() -> Timestamp(1000, 1, 1)) == "Year: 1000 out of range for Timestamp{Nanosecond}"
-    @test errmsg(() -> Timestamp{Nanosecond}(1677, 9, 21)) == "Timestamp: 1677-9-21 out of range for Timestamp{Nanosecond} (1677-9-21 to 2262-4-11)"
+    if TIMESTAMP_FROM_DATES
+        @test_throws ArgumentError Timestamp{Nanosecond}(1677, 9, 21)
+    else
+        @test errmsg(() -> Timestamp{Nanosecond}(1677, 9, 21)) == "Timestamp: 1677-9-21 out of range for Timestamp{Nanosecond} (1677-9-21 to 2262-4-11)"
+    end
     @test errmsg(() -> Timestamp{Second}(2026, 1, 1, 0, 0, 0, 500)) == "Fractional second is not exactly representable as Timestamp{Second}"
     # ns may carry a full fractional second as long as the total stays below 1s
     @test Timestamp(2026, 1, 1, 0, 0, 0, 0, 0, 999999999) ==
@@ -535,7 +539,11 @@ end
     @test Timestamp{Microsecond}(1) == DateTime(1)
     @test_throws ArgumentError Timestamp{Nanosecond}(1)
     @test_throws TypeError Timestamp{Day}
-    @test_throws TypeError Timestamp{TimePeriod}
+    if TIMESTAMP_FROM_DATES
+        @test_throws TypeError Timestamp{TimePeriod}
+    else
+        @test Timestamp{TimePeriod} <: Timestamp
+    end
     for (coarse, fine) in ((Second, Millisecond), (Millisecond, Microsecond), (Microsecond, Nanosecond))
         T, U = Timestamp{coarse}, Timestamp{fine}
         finevalue = U(1970) + fine(1)

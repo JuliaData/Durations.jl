@@ -69,3 +69,7 @@ end
 
 include("timestamps.jl")
 include("arrow.jl")
+
+if !Durations.TIMESTAMP_FROM_DATES
+    include("subnanosecond.jl")
+end
