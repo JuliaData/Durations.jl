@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0
 
 Add `Durations.ZonedTimestamp{P,Z}`: a UTC `Timestamp{P}` in the time zone named by the
 `Symbol` `Z`, with the 8-byte layout of an Arrow `timestamp` column that has a time zone.
