@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Add `Durations.ZonedTimestamp{P,Z}`: a UTC `Timestamp{P}` in the time zone named by the
+`Symbol` `Z`, with the 8-byte layout of an Arrow `timestamp` column that has a time zone.
+Durations knows `"UTC"` and fixed offsets; a TimeZones.jl extension adds named zones and
+conversions to and from `ZonedDateTime`. The Arrow.jl extension writes and reads
+`ZonedTimestamp` columns. See README.md.
+
+Allow loading with Arrow 3.x, whose native mappings belong in Arrow. Validate parsed
+offsets, check UTC conversion and rounding limits, and preserve fixed-zone offsets
+when converting from TimeZones.jl. Zoned values compare unequal to timezone-free values.
+
 ## 1.3.0
 
 Allow `Timestamp{P}` to use package-defined `Dates.TimePeriod` types, including

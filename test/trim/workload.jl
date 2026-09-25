@@ -43,6 +43,19 @@ function (@main)(args::Vector{String})::Cint
         e isa ArgumentError || return 22
         (e.msg::String) == "Fractional second is not exactly representable as Timestamp{Second}" || return 23
     end
+    # ZonedTimestamp with the zone rules Durations knows ("UTC" and fixed offsets)
+    J = Durations.ZonedTimestamp{Nanosecond,Symbol("+07:00")}
+    zt = J(Timestamp(2026, 3, 8, 16, 0, 0, 0, 0, 5))
+    Dates.value(zt.utc) == Dates.value(Timestamp(2026, 3, 8, 9, 0, 0, 0, 0, 5)) || return 30
+    hour(zt) == 16 || return 31
+    Timestamp(zt + Day(1)) == Timestamp(2026, 3, 9, 16, 0, 0, 0, 0, 5) || return 32
+    U = Durations.ZonedTimestamp{Nanosecond,:UTC}
+    U(zt) == zt || return 33
+    hash(U(zt)) == hash(zt) || return 34
+    Timestamp(floor(zt, Day)) == Timestamp(2026, 3, 8) || return 35
+    v = reinterpret(J, Int64[0, 1])
+    v[2] - v[1] == Nanosecond(1) || return 36
+    Timestamp(ceil(zt, Second)) == Timestamp(2026, 3, 8, 16, 0, 1) || return 37
     Core.println("trim workload passed")
     return 0
 end
