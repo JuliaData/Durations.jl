@@ -68,6 +68,6 @@ using Dates: CompoundPeriod
 end
 
 include("timestamps.jl")
-include("zoned.jl")  # before arrow.jl, which loads TimeZones.jl
+include("zoned.jl")  # before the Arrow 2.x tests, which load TimeZones.jl
 include("arrow.jl")
 include("zoned_timezones.jl")

@@ -55,6 +55,7 @@ function (@main)(args::Vector{String})::Cint
     Timestamp(floor(zt, Day)) == Timestamp(2026, 3, 8) || return 35
     v = reinterpret(J, Int64[0, 1])
     v[2] - v[1] == Nanosecond(1) || return 36
+    Timestamp(ceil(zt, Second)) == Timestamp(2026, 3, 8, 16, 0, 1) || return 37
     Core.println("trim workload passed")
     return 0
 end

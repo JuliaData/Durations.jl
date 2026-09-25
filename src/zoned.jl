@@ -24,8 +24,10 @@ knows.
 ```julia
 julia> const Jakarta = Durations.ZonedTimestamp{Nanosecond, Symbol("+07:00")};
 
-julia> zt = Jakarta(Timestamp(2026, 3, 8, 16, 0))
-Durations.ZonedTimestamp{Nanosecond, Symbol("+07:00")}("2026-03-08T16:00:00+07:00[+07:00]")
+julia> zt = Jakarta(Timestamp(2026, 3, 8, 16, 0));
+
+julia> string(zt)
+"2026-03-08T16:00:00+07:00[+07:00]"
 
 julia> Timestamp(zt, UTC), hour(zt)
 (Timestamp{Nanosecond}("2026-03-08T09:00:00"), 16)
@@ -47,8 +49,6 @@ errors.
 """
 struct ZonedTimestamp{P<:Union{Second,Millisecond,Microsecond,Nanosecond},Z} <: AbstractDateTime
     utc::Timestamp{P}
-    # One method on purpose: dispatch ranks `utc::Timestamp` above `utc::Timestamp{P}`, so an
-    # outer method that converts the resolution would call itself.
     function ZonedTimestamp{P,Z}(utc::Timestamp, ::Type{UTC}) where {P,Z}
         Z isa Symbol && Z !== Symbol("") ||
             throw(ArgumentError("the time zone name must be a nonempty Symbol"))
@@ -120,18 +120,24 @@ function localrules(r::ZoneRules, l::Int64)
     return start:finish
 end
 
-localend(r::ZoneRules, i::Int) = i == length(r.starts) ? typemax(Int64) : r.starts[i + 1] + r.offsets[i]
+localend(r::ZoneRules, i::Int) = i == length(r.starts) ?
+    Int128(typemax(Int64)) + 1 : Int128(r.starts[i + 1]) + r.offsets[i]
 
-# "UTC" or a fixed offset "+HH:MM" or "-HH:MM", as Arrow writes them, in seconds
-function fixedoffset(name::String)
+# Arrow zone names use "UTC" or "±HH:MM". Historical local-time text may also
+# carry offset seconds; enable those only while parsing a timestamp's text.
+function fixedoffset(name::AbstractString, seconds::Bool=false)
     name == "UTC" && return Int64(0)
     b = codeunits(name)
-    length(b) == 6 && b[1] in (UInt8('+'), UInt8('-')) && b[4] == UInt8(':') &&
-        all(i -> UInt8('0') <= b[i] <= UInt8('9'), (2, 3, 5, 6)) || return nothing
+    n = length(b)
+    (n == 6 || seconds && n == 9) && b[1] in (UInt8('+'), UInt8('-')) &&
+        b[4] == UInt8(':') && (n == 6 || b[7] == UInt8(':')) || return nothing
+    positions = n == 6 ? (2, 3, 5, 6) : (2, 3, 5, 6, 8, 9)
+    all(i -> UInt8('0') <= b[i] <= UInt8('9'), positions) || return nothing
     h = 10 * Int64(b[2] - UInt8('0')) + Int64(b[3] - UInt8('0'))
     m = 10 * Int64(b[5] - UInt8('0')) + Int64(b[6] - UInt8('0'))
-    h <= 23 && m <= 59 || return nothing
-    return b[1] == UInt8('-') ? -(3600h + 60m) : 3600h + 60m
+    s = n == 6 ? Int64(0) : 10 * Int64(b[8] - UInt8('0')) + Int64(b[9] - UInt8('0'))
+    h <= 23 && m <= 59 && s <= 59 || return nothing
+    return (b[1] == UInt8('-') ? -1 : 1) * (3600h + 60m + s)
 end
 
 # The rules for a time zone name other than "UTC" and fixed offsets, or `nothing` if the name
@@ -243,6 +249,7 @@ Base.showerror(io::IO, e::AmbiguousTimeError) =
 The time whose local time in zone `Z` is `ts`, or the given date, time, or parts.
 """
 function ZonedTimestamp{P,Z}(ts::Timestamp; occurrence::Integer=0) where {P,Z}
+    occurrence in (0, 1, 2) || throw(ArgumentError("occurrence must be 0, 1, or 2"))
     lt = Timestamp{P}(ts)
     r = zonerules(Z)
     tps = ticks_per_second(P)
@@ -284,6 +291,9 @@ Dates.now(::Type{ZonedTimestamp{P,Z}}) where {P,Z} = ZonedTimestamp{P,Z}(Dates.n
 ### Comparison and arithmetic: the UTC time for instants, the local time for calendar periods
 
 Dates.value(zt::ZonedTimestamp) = Dates.value(zt.utc)
+# A wall-clock value has no zone with which to identify a UTC instant.
+Base.:(==)(::ZonedTimestamp, ::Union{Date,DateTime,Timestamp}) = false
+Base.:(==)(::Union{Date,DateTime,Timestamp}, ::ZonedTimestamp) = false
 Base.:(==)(x::ZonedTimestamp, y::ZonedTimestamp) = x.utc == y.utc
 Base.:(==)(x::T, y::T) where {T<:ZonedTimestamp} = x.utc == y.utc
 Base.isless(x::ZonedTimestamp, y::ZonedTimestamp) = isless(x.utc, y.utc)
@@ -306,15 +316,34 @@ end
 
 Base.floor(zt::ZonedTimestamp{P,Z}, p::DatePeriod) where {P,Z} = ZonedTimestamp{P,Z}(floor(localtime(zt), p))
 Base.ceil(zt::ZonedTimestamp{P,Z}, p::DatePeriod) where {P,Z} = ZonedTimestamp{P,Z}(ceil(localtime(zt), p))
-# Round the local time at the current offset, so a repeated hour keeps its offset
-function Base.floor(zt::ZonedTimestamp{P,Z}, p::TimePeriod) where {P,Z}
+# Reuse Timestamp's wide rounding bounds before subtracting the current offset.
+# This preserves the occurrence of a repeated hour and checks only the final UTC count.
+const TimestampImplementation = TIMESTAMP_FROM_DATES ? Dates : @__MODULE__
+function zoned_rounding_bounds(zt::ZonedTimestamp, p::TimePeriod, upper::Bool)
     lt = localtime(zt)
-    return ZonedTimestamp{P,Z}(floor(lt, p) - (lt - zt.utc), UTC)
+    f, c = TimestampImplementation.timestamp_rounding_bounds(lt, p, upper)
+    offset = Int128(Dates.value(lt) - Dates.value(zt.utc)) *
+        TimestampImplementation.timestamp_scale(typeof(lt))
+    return f - offset, c - offset
+end
+
+zoned_rounding_value(zt::ZonedTimestamp{P,Z}, ns, op) where {P,Z} =
+    ZonedTimestamp{P,Z}(TimestampImplementation.timestamp_rounding_value(zt.utc, ns, op), UTC)
+
+Base.floor(zt::ZonedTimestamp, p::TimePeriod) =
+    zoned_rounding_value(zt, first(zoned_rounding_bounds(zt, p, false)), :floor)
+Base.ceil(zt::ZonedTimestamp, p::TimePeriod) =
+    zoned_rounding_value(zt, last(zoned_rounding_bounds(zt, p, true)), :ceil)
+Dates.floorceil(zt::ZonedTimestamp, p::Dates.Period) = (floor(zt, p), ceil(zt, p))
+function Base.round(zt::ZonedTimestamp, p::TimePeriod, ::RoundingMode{:NearestTiesUp})
+    f, c = zoned_rounding_bounds(zt, p, true)
+    x = Int128(Dates.value(zt.utc)) * TimestampImplementation.timestamp_scale(typeof(zt.utc))
+    return zoned_rounding_value(zt, x - f < c - x ? f : c, :round)
 end
 
 Dates.guess(a::ZonedTimestamp, b::ZonedTimestamp, c) = Dates.guess(a.utc, b.utc, c)
 
-### Text: the local time and offset, then the zone name in brackets (RFC 9557)
+### Text: the local time and offset, then the zone name in brackets
 
 function Base.print(io::IO, zt::ZonedTimestamp{P,Z}) where {P,Z}
     off = tryoffset(zt)
@@ -333,7 +362,10 @@ function Base.print(io::IO, zt::ZonedTimestamp{P,Z}) where {P,Z}
 end
 
 Base.show(io::IO, ::MIME"text/plain", zt::ZonedTimestamp) = print(io, zt)
-Base.show(io::IO, zt::ZonedTimestamp) = print(io, typeof(zt), "(\"", zt, "\")")
+# A raw-count constructor also round-trips negative years on older Dates parsers.
+function Base.show(io::IO, zt::ZonedTimestamp{P}) where {P}
+    print(io, typeof(zt), "(reinterpret(", Timestamp{P}, ", Int64(", Dates.value(zt), ")), Dates.UTC)")
+end
 Base.typeinfo_implicit(::Type{<:ZonedTimestamp}) = true
 
 """
@@ -351,10 +383,11 @@ function ZonedTimestamp{P,Z}(str::AbstractString) where {P,Z}
     endswith(body, 'Z') && return ZonedTimestamp{P,Z}(Timestamp{P}(chop(body)), UTC)
     i = findlast(c -> c == '+' || c == '-', body)
     i === nothing && throw(bad())
-    parts = split(SubString(body, nextind(body, i)), ':')
-    length(parts) in (2, 3) && all(x -> length(x) == 2 && all(isdigit, x), parts) || throw(bad())
-    off = sum(parse(Int64, x) * f for (x, f) in zip(parts, (3600, 60, 1)))
-    utc = Timestamp{P}(SubString(body, 1, prevind(body, i))) - Second(body[i] == '-' ? -off : off)
+    off = fixedoffset(SubString(body, i), true)
+    off === nothing && throw(bad())
+    lt = Timestamp{P}(SubString(body, 1, prevind(body, i)))
+    utc = shift(lt, off, Int64(-1))
+    utc === nothing && throw(OverflowError("the UTC time is outside the range of Timestamp"))
     return ZonedTimestamp{P,Z}(utc, UTC)
 end
 

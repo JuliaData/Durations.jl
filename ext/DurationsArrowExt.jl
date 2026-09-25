@@ -7,6 +7,10 @@ module DurationsArrowExt
 using Durations: Timestamp, ZonedTimestamp
 using Dates: Dates, Second, Millisecond, Microsecond, Nanosecond, UTC
 using Arrow: Arrow
+
+# Arrow 2.x uses its own timestamp wrapper. Arrow 3.x owns native logical-type
+# mappings and has no Arrow.Timestamp; it can use these 8-byte values directly.
+@static if isdefined(Arrow, :Timestamp)
 const ArrowTypes = Arrow.ArrowTypes
 const Meta = Arrow.Meta
 
@@ -47,4 +51,5 @@ ArrowTypes.fromarrow(::Type{ZonedTimestamp{P,Z}}, x::Arrow.Timestamp{U}) where {
 ArrowTypes.default(::Type{ZonedTimestamp{P,Z}}) where {P,Z} =
     ZonedTimestamp{P,Z}(Timestamp{P}(Dates.UTInstant(P(0))), UTC)
 
+end
 end

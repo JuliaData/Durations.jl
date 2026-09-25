@@ -2,7 +2,8 @@
 # comparisons between `ZonedTimestamp` and `ZonedDateTime`.
 module DurationsTimeZonesExt
 
-using Durations: Durations, ZonedTimestamp, Timestamp, ZoneRules
+using Durations: Durations, Timestamp, ZoneRules
+import Durations: ZonedTimestamp
 using Dates: Dates, DateTime, UTC
 using TimeZones: TimeZones, TimeZone, FixedTimeZone, VariableTimeZone, ZonedDateTime, Class
 
@@ -24,12 +25,20 @@ function rules(name::Symbol, tz::VariableTimeZone)
     return ZoneRules(name, starts, Int64[offset(x.zone) for x in t], until)
 end
 
-# The zone name for a TimeZones.jl zone. TimeZones names a fixed offset "UTC+07:30", and Arrow
-# writes it "+07:30".
+# Named zones must be reconstructible from the name alone. Custom fixed zones
+# use an Arrow offset; sub-minute custom offsets have no Arrow representation.
 function zonesymbol(tz::TimeZone)
     name = String(TimeZones.name(tz))
-    tz isa FixedTimeZone && occursin(r"^UTC[+-]", name) && return Symbol(chop(name; head=3, tail=0))
-    return Symbol(name)
+    if !(tz isa FixedTimeZone && (startswith(name, "UTC+") || startswith(name, "UTC-"))) &&
+        TimeZones.istimezone(name, Class(:ALL)) && TimeZone(name, Class(:ALL)) == tz
+        return Symbol(name)
+    end
+    tz isa FixedTimeZone || throw(ArgumentError("a custom time zone cannot be stored by name"))
+    off = offset(tz)
+    abs(off) < 86400 && rem(off, 60) == 0 ||
+        throw(ArgumentError("Arrow fixed offsets require whole minutes within 24 hours"))
+    h, m = divrem(abs(off) ÷ 60, 60)
+    return Symbol(off < 0 ? "-" : "+", lpad(h, 2, '0'), ':', lpad(m, 2, '0'))
 end
 
 Durations.astimezone(zt::ZonedTimestamp{P}, tz::TimeZone) where {P} = ZonedTimestamp{P,zonesymbol(tz)}(zt)

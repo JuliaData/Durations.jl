@@ -1,6 +1,7 @@
 using Arrow
 const DurationsArrowExt = Base.get_extension(Durations, :DurationsArrowExt)
 
+@static if isdefined(Arrow, :Timestamp)
 @testset "Arrow" begin
     for P in (Second, Millisecond, Microsecond, Nanosecond)
         col = [Timestamp{P}(Dates.UTInstant(P(123_456_789))), Timestamp{P}(Dates.UTInstant(P(-1))), Timestamp{P}(1970)]
@@ -32,4 +33,7 @@ const DurationsArrowExt = Base.get_extension(Durations, :DurationsArrowExt)
     # Arrow.jl's own mapping of DateTime is untouched
     t = Arrow.Table(Arrow.tobuffer((dt=[DateTime(2026, 1, 1)],)))
     @test eltype(t.dt) === DateTime
+end
+else
+    include("arrow3.jl")
 end

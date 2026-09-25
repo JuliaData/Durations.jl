@@ -1,5 +1,5 @@
-# ZonedTimestamp without TimeZones.jl. runtests.jl includes this file before arrow.jl, which
-# loads Arrow.jl and with it TimeZones.jl.
+# ZonedTimestamp without TimeZones.jl. Run before the tests that load TimeZones,
+# including Arrow 2.x, which depends on it.
 using Durations: ZonedTimestamp
 
 # the `y` format code accepts a leading sign starting with the Julia 1.12 Dates stdlib
@@ -24,6 +24,7 @@ const PARSES_NEGATIVE_YEARS = tryparse(DateTime, "-0001-01-01", dateformat"yyyy-
             @test v[2] < v[3] && v[3] - v[2] == P(1) && v[3] + P(1) == v[4]
             @test hash(v[3]) == hash(T(Timestamp{P}(1970), UTC))
             @test all(x -> !PARSES_NEGATIVE_YEARS && startswith(string(x), '-') || T(string(x)) == x, v)
+            @test all(x -> eval(Meta.parse(repr(x))) === x, v)
             @test Durations.zonename(T) == Durations.zonename(v[1]) == String(Z)
         end
         @test_throws ArgumentError ZonedTimestamp{Nanosecond,Symbol("")}(Timestamp(2026), UTC)
@@ -100,5 +101,42 @@ const PARSES_NEGATIVE_YEARS = tryparse(DateTime, "-0001-01-01", dateformat"yyyy-
         @test string(mx) == "2262-04-11T23:47:16.854775807Z[+07:00]"
         @test_throws OverflowError hour(mx)
         @test_throws OverflowError ZonedTimestamp{Nanosecond,Symbol("-07:00")}(typemax(Timestamp))
+    end
+
+    @testset "Invalid input and rounding limits" begin
+        U = ZonedTimestamp{Nanosecond,:UTC}
+        for offset in ("+24:00", "-00:60", "+99:99", "+00:00:60", "+0:00", "+０1:00")
+            @test_throws ArgumentError U("2026-01-01T00:00:00" * offset * "[UTC]")
+        end
+        @test U("2026-01-01T00:00:30+00:00:30[UTC]") == U(2026)
+        @test_throws OverflowError U(string(typemax(Timestamp)) * "-01:00[UTC]")
+        @test_throws OverflowError U(string(typemin(Timestamp)) * "+01:00[UTC]")
+        @test_throws ArgumentError U(Timestamp(2026); occurrence=-1)
+        @test_throws ArgumentError U(Timestamp(2026); occurrence=3)
+        for naive in (Date(2026), DateTime(2026), Timestamp(2026))
+            @test U(2026) != naive && naive != U(2026)
+            @test !isequal(U(2026), naive)
+            @test length(Set([U(2026), naive])) == 2
+        end
+        for P in (Second, Millisecond, Microsecond, Nanosecond), bound in (typemin, typemax)
+            T = ZonedTimestamp{P,:UTC}
+            ts = bound(Timestamp{P})
+            zt = T(ts, UTC)
+            @test T(ts) == zt
+            for op in (floor, ceil, round), period in (Second(7), Hour(13), Nanosecond(1))
+                expected = try op(ts, period) catch e; e end
+                if expected isa Exception
+                    @test_throws typeof(expected) op(zt, period)
+                else
+                    @test op(zt, period).utc == expected
+                end
+            end
+        end
+        # Only the final UTC count must fit, even if the rounded local count does not.
+        W = ZonedTimestamp{Nanosecond,Symbol("-01:00")}
+        zt = W(typemin(Timestamp) + Hour(1), UTC)
+        @test Dates.value(floor(zt, Second)) == -9223368437000000000
+        @test_throws InexactError ceil(U(typemax(Timestamp), UTC), Second)
+        @test_throws InexactError Dates.floorceil(U(typemax(Timestamp), UTC), Second(1))
     end
 end

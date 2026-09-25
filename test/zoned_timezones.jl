@@ -75,6 +75,7 @@ end
 
 @testset "ZonedTimestamp with TimeZones.jl" begin
     @test Base.get_extension(Durations, :DurationsTimeZonesExt) !== nothing
+    @test isempty(Test.detect_ambiguities(Durations, Base.get_extension(Durations, :DurationsTimeZonesExt); recursive=true))
     D = ZonedTimestamp{Nanosecond,Symbol("America/Denver")}
 
     @testset "Every zone agrees with TimeZones.jl" begin
@@ -134,9 +135,10 @@ end
         unknown = ZonedTimestamp{Nanosecond,Symbol("Vendor/Unknown")}(Timestamp(2026), UTC)
         @test_throws ArgumentError hour(unknown)
         @test string(unknown) == "2026-01-01T00:00:00Z[Vendor/Unknown]"
-        late = D(Timestamp(2040, 1, 1), UTC)  # the rules for zones with daylight saving time end in 2038
+        cutoff = TimeZone("America/Denver").cutoff
+        late = D(Timestamp(cutoff), UTC)
         @test_throws ArgumentError hour(late)
-        @test string(late) == "2040-01-01T00:00:00Z[America/Denver]"
+        @test string(late) == string(Timestamp(cutoff), "Z[America/Denver]")
     end
 
     @testset "ZonedDateTime" begin
@@ -155,5 +157,15 @@ end
         @test paris isa ZonedTimestamp{Millisecond,Symbol("Europe/Paris")} && paris == zt && hour(paris) == 9
         @test astimezone(zt, tz"UTC") isa ZonedTimestamp{Millisecond,:UTC}
         @test Durations.astimezone(zt, tz"Europe/Paris") === paris
+        # A custom label cannot supply rules when only its name is stored.
+        custom = ZonedDateTime(2026, 1, 1, FixedTimeZone("Office", 3600))
+        encoded = ZonedTimestamp(custom)
+        @test Durations.zonename(encoded) == "+01:00"
+        @test Timestamp(encoded) == Timestamp{Millisecond}(2026)
+        @test ZonedDateTime(encoded) == custom
+        @test Durations.zonename(ZonedTimestamp(ZonedDateTime(2026, 1, 1, FixedTimeZone("UTC", 3600)))) == "+01:00"
+        for zone in (FixedTimeZone("Office", 30), FixedTimeZone("UTC+00:00:30"))
+            @test_throws ArgumentError ZonedTimestamp(ZonedDateTime(2026, 1, 1, zone))
+        end
     end
 end
