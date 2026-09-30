@@ -69,11 +69,7 @@ end
     # the messages name the resolution and bounds without printing a Timestamp or a type
     errmsg(f) = try; f(); ""; catch e; e.msg; end
     @test errmsg(() -> Timestamp(1000, 1, 1)) == "Year: 1000 out of range for Timestamp{Nanosecond}"
-    if TIMESTAMP_FROM_DATES
-        @test_throws ArgumentError Timestamp{Nanosecond}(1677, 9, 21)
-    else
-        @test errmsg(() -> Timestamp{Nanosecond}(1677, 9, 21)) == "Timestamp: 1677-9-21 out of range for Timestamp{Nanosecond} (1677-9-21 to 2262-4-11)"
-    end
+    @test errmsg(() -> Timestamp{Nanosecond}(1677, 9, 21)) == "Timestamp: 1677-9-21 out of range for Timestamp{Nanosecond} (1677-9-21 to 2262-4-11)"
     @test errmsg(() -> Timestamp{Second}(2026, 1, 1, 0, 0, 0, 500)) == "Fractional second is not exactly representable as Timestamp{Second}"
     # ns may carry a full fractional second as long as the total stays below 1s
     @test Timestamp(2026, 1, 1, 0, 0, 0, 0, 0, 999999999) ==
@@ -265,8 +261,7 @@ end
     @test round(ts, Second) == Timestamp(2026, 8, 31, 13, 45, 30)
     @test round(ts, Hour) == Timestamp(2026, 8, 31, 14)
     @test_throws DomainError floor(ts, Nanosecond(-1))
-    # rounding to time periods wraps like the arithmetic it is built from, so
-    # results near the ends of the range are right whenever they are representable
+    # rounding near the ends of the range is exact when the result fits
     @test ceil(typemin(Timestamp), Nanosecond(10)) == typemin(Timestamp) + Nanosecond(8)
     @test ceil(typemin(Timestamp), Hour) == Timestamp(1677, 9, 21, 1)
     @test round(typemin(Timestamp), Minute) == Timestamp(1677, 9, 21, 0, 13)
@@ -622,10 +617,10 @@ end
 
 module TimestampPeriodExtensionTests
 using Dates, Test
-using Durations: Durations, Timestamp
+using Durations: Durations, Timestamp, unix2timestamp
 const TimestampHelpers = Durations.TIMESTAMP_FROM_DATES ? Dates : Durations
 
-# A primitive Int128 period exercises the count/scale interface without built-in period promotion.
+# A package-defined 128-bit picosecond period with no period promotion rules
 primitive type TestPicosecond <: Dates.TimePeriod 128 end
 TestPicosecond(x::Real) = reinterpret(TestPicosecond, Int128(x))
 Dates.value(x::TestPicosecond) = reinterpret(Int128, x)
@@ -634,6 +629,109 @@ Base.typemax(::Type{TestPicosecond}) = TestPicosecond(typemax(Int128))
 TimestampHelpers.timestamp_scale(::Type{TestPicosecond}) = 1 // big(1000)
 TimestampHelpers.timestamp_totaldays(::Type{TestPicosecond}, y, m, d) = Dates.totaldays(big(y), m, d)
 Dates.tons(p::TestPicosecond) = Dates.value(p) // big(1000)
+
+# Equal-resolution promotion and invalid scales use the same package-defined period.
+primitive type TestNanosecond{Scale} <: Dates.TimePeriod 128 end
+TestNanosecond{S}(x::Real) where {S} = reinterpret(TestNanosecond{S}, Int128(x))
+Dates.value(x::TestNanosecond) = reinterpret(Int128, x)
+Base.typemin(::Type{TestNanosecond{S}}) where {S} = TestNanosecond{S}(typemin(Int128))
+Base.typemax(::Type{TestNanosecond{S}}) where {S} = TestNanosecond{S}(typemax(Int128))
+Dates.tons(x::TestNanosecond{S}) where {S} = Dates.value(x) * S
+
+@testset "Equal-resolution promotion and supported scales" begin
+    T = Timestamp{TestNanosecond{1}}
+    a, b = T(2026), Timestamp(2026)
+    @test promote(a, b) === (a, a)
+    @test promote(b, a) === (a, a)
+    @test a - b === TestNanosecond{1}(0)
+    @test [T(3000), b] == T[T(3000), a]
+    @test convert(Hour, Timestamp(1970, 1, 1, 1)) == Hour(1)
+    @test convert(Timestamp{Nanosecond}, Hour(1)) == Timestamp(1970, 1, 1, 1)
+    for P in (Hour, Minute, TestNanosecond{0}, TestNanosecond{-1}, TestNanosecond{3})
+        @test_throws ArgumentError Timestamp{P}(Dates.UTInstant(P(1)))
+        @test_throws ArgumentError unix2timestamp(Timestamp{P}, 1)
+        @test_throws ArgumentError now(Timestamp{P}, UTC)
+    end
+end
+
+@testset "Rational Unix conversion avoids intermediate overflow" begin
+    for P in (Microsecond, Nanosecond), sign in (-1, 1)
+        x = sign * (9007199254740991 // 999999999)
+        expected = trunc(Int64, big(x) * (1000000000 ÷ Dates.tons(P(1))))
+        @test Dates.value(unix2timestamp(Timestamp{P}, x)) == expected
+        @test unix2timestamp(Timestamp{P}, x) == unix2timestamp(Timestamp{P}, big(x))
+    end
+    @test_throws InexactError unix2timestamp(Timestamp, typemax(Int64) // 1)
+end
+
+# Fractional units need exact ratios, including calendar fields finer than the unit.
+@testset "Fractional Timestamp scales" begin
+    P = TestNanosecond{2//3}
+    T = Timestamp{P}
+    origin = T(Dates.UTInstant(P(0)))
+    @test Dates.value(origin + Nanosecond(2)) == 3
+    @test Dates.value(origin - Nanosecond(2)) == -3
+    @test_throws InexactError origin + Nanosecond(1)
+    @test_throws InexactError origin - Nanosecond(1)
+    @test nanosecond(T(Dates.UTInstant(P(3)))) === Int64(2)
+    @test nanosecond(T(Dates.UTInstant(P(-1)))) === Int64(999)
+    @test now(T) isa T
+    @test now(T, UTC) isa T
+    @test now(Timestamp{TestNanosecond{1000000000//3}}) isa Timestamp{TestNanosecond{1000000000//3}}
+    for scale in (1//3, 2//3, 1000000000//3), n in (typemin(Int128), Int128(-1), Int128(1), typemax(Int128))
+        t = Timestamp{TestNanosecond{scale}}(Dates.UTInstant(TestNanosecond{scale}(n)))
+        ns = big(n) * scale
+        for (accessor, unit, modulus) in ((hour, 3600000000000, 24), (minute, 60000000000, 60),
+                                        (second, 1000000000, 60), (millisecond, 1000000, 1000),
+                                        (microsecond, 1000, 1000), (nanosecond, 1, 1000))
+            @test accessor(t) == mod(fld(ns, unit), modulus)
+        end
+    end
+end
+
+# Wide counts must not overflow before conversion, rounding, or range estimation.
+@testset "Int128 Timestamp intermediates" begin
+    T = Timestamp{TestNanosecond{1}}
+    S = Timestamp{TestNanosecond{1000000000}}
+    for n in (typemin(Int128), typemax(Int128))
+        t = S(Dates.UTInstant(TestNanosecond{1000000000}(n)))
+        @test_throws InexactError T(t)
+        @test_throws InexactError convert(TestNanosecond{1}, t)
+        @test_throws InexactError DateTime(t)
+        @test_throws InexactError convert(T, TestNanosecond{1000000000}(n))
+    end
+    @test Dates.value(T(1970) + Hour(typemax(Int64))) == big(typemax(Int64)) * 3600000000000
+    @test Dates.guess(typemin(T), typemax(T), TestNanosecond{1}(typemax(Int128))) == 2
+    for scale in (1, 1000000000, 2//3, 1//1000)
+        P = TestNanosecond{scale}
+        U = Timestamp{P}
+        for n in (typemin(Int128), typemin(Int128)+1, Int128(-1), Int128(0), Int128(1), typemax(Int128)-1, typemax(Int128)),
+            p in (Nanosecond(10), Second(10), P(10), P(typemax(Int128)))
+            t = U(Dates.UTInstant(P(n)))
+            x = big(n) * scale
+            step = big(Dates.value(p)) * Dates.tons(oneunit(p))
+            epoch = big(Dates.totaldays(1970, 1, 1) - Dates.DATEEPOCH) * 86400000000000
+            f = x - mod(x + epoch, step)
+            c = x == f ? f : f + step
+            nearest = x - f < c - x ? f : c
+            for (op, result) in ((floor, f), (ceil, c), (round, nearest))
+                ticks, remainder = divrem(result, scale)
+                if iszero(remainder) && typemin(Int128) <= ticks <= typemax(Int128)
+                    @test Dates.value(op(t, p)) == ticks
+                else
+                    @test_throws InexactError op(t, p)
+                end
+            end
+        end
+    end
+    for U in (T, S)
+        t = typemax(U)
+        y = year(t)
+        ns = (Dates.totaldays(big(y), 1, 1) - Dates.totaldays(1970, 1, 1)) * 86400000000000
+        @test Dates.value(floor(t, Year)) == ns ÷ TimestampHelpers.timestamp_scale(U)
+        @test_throws InexactError ceil(t, Year)
+    end
+end
 
 @testset "Package-defined Timestamp period" begin
     T = Timestamp{TestPicosecond}
@@ -684,8 +782,14 @@ Dates.tons(p::TestPicosecond) = Dates.value(p) // big(1000)
     @test Date(before) == Date(1969, 12, 31)
     @test Dates.nanosecond(before) == 999
     @test floor(before, Nanosecond) == convert(T, Nanosecond(-1))
-    @test year(T(10^18)) == 10^18
-    @test_throws InexactError Date(T(10^18))
+    # formatting rounds digits finer than a nanosecond down
+    @test string(origin + Nanosecond(1)) == "2026-09-24T00:00:00.000000001"
+    @test string(origin + TestPicosecond(1999)) == "2026-09-24T00:00:00.000000001"
+    @test string(origin + TestPicosecond(999)) == "2026-09-24T00:00:00"
+    @test string(before) == "1969-12-31T23:59:59.999999999"
+    @test Dates.format(x, "HH:MM:SS.nnnnnnnnn") == "00:00:00.000000000"
+    @test year(T(Int64(10)^18)) == Int64(10)^18
+    @test_throws InexactError Date(T(Int64(10)^18))
     @test_throws ArgumentError T(Year(2026), TestPicosecond(1))
     @test_throws ArgumentError T(TestPicosecond(1))
     @test isempty(Test.detect_ambiguities(TimestampPeriodExtensionTests; recursive=true))

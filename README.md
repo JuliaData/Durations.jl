@@ -204,10 +204,12 @@ four 64-bit timestamp units; package-defined wider periods remain a `Timestamp` 
 Packages can extend `Timestamp{P}` with a `Dates.TimePeriod` that stores its own
 count, including a primitive Int128 period. The internal helpers obtain the count
 through `Dates.value`, its bounds through `typemin`/`typemax`, and its exact scale
-in nanoseconds through `timestamp_scale(P)`. A rational scale supports units finer
-than a nanosecond. Wider calendar calculations can specialize
-`timestamp_totaldays(P, y, m, d)`. Fractional formatting and parsing are separate
-extensions. Add custom periods with `+` or use `convert(Timestamp{P}, P(count))`
+in nanoseconds through `Dates.tons(oneunit(P))`. One unit must be a positive exact
+subdivision of a second. A rational scale supports units finer than a nanosecond;
+printing and the `n` format code round those finer digits down. Equal-resolution
+promotion picks the wider count, then uses period promotion when the widths match.
+Wider calendar calculations can specialize `timestamp_totaldays(P, y, m, d)`.
+Add custom periods with `+` or use `convert(Timestamp{P}, P(count))`
 for raw epoch counts; unsupported calendar parts throw instead of being ignored.
 
 These helpers are internal and may change with the Dates proposal. The four
