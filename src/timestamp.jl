@@ -75,8 +75,15 @@ const UNIXEPOCHDAYS = Dates.totaldays(1970, 1, 1)
 # A rational scale permits sub-nanosecond resolution without floating point.
 timestamp_count_type(::Type{P}) where {P} = typeof(value(zero(P)))
 timestamp_totaldays(::Type{P}, y, m, d) where {P} = Dates.totaldays(y, m, d)
-function timestamp_scale(::Type{P}) where {P<:Period}
+# Exact nanoseconds per period unit, including periods longer than a second.
+function timestamp_period_scale(::Type{P}) where {P<:Period}
     scale = Dates.tons(oneunit(P))
+    scale isa Union{Integer,Rational} ||
+        throw(ArgumentError("Timestamp period scale must be an Integer or Rational number of nanoseconds"))
+    return scale
+end
+function timestamp_scale(::Type{P}) where {P<:Period}
+    scale = timestamp_period_scale(P)
     scale > 0 && iszero(rem(1000000000, scale)) ||
         throw(ArgumentError("Timestamp resolution must be a positive exact subdivision of a second"))
     return scale
@@ -346,9 +353,9 @@ Dates.Time(dt::Timestamp) = convert(Time, dt)
 # Raw Unix counts, rather than calendar components.
 Base.convert(::Type{Timestamp}, x::Nanosecond) = Timestamp(UTInstant(x))
 Base.convert(::Type{P}, dt::Timestamp{Q}) where {P<:TimePeriod,Q} =
-    P(timestamp_ticks(P, widen(value(dt)) * timestamp_scale(Q), Dates.tons(oneunit(P))))
+    P(timestamp_ticks(P, widen(value(dt)) * timestamp_scale(Q), timestamp_period_scale(P)))
 Base.convert(::Type{Timestamp{P}}, x::Q) where {P,Q<:TimePeriod} =
-    Timestamp{P}(UTInstant(P(timestamp_ticks(P, widen(value(x)) * Dates.tons(oneunit(Q))))))
+    Timestamp{P}(UTInstant(P(timestamp_ticks(P, widen(value(x)) * timestamp_period_scale(Q)))))
 
 """
     unix2timestamp(x)::Timestamp
@@ -445,7 +452,7 @@ end
 
 # Fixed-duration arithmetic preserves resolution and wraps in units of P.
 function timestamp_period_ticks(::Type{P}, y::Union{FixedPeriod,TimePeriod}) where {P}
-    ticks, remainder = divrem(widen(value(y)) * Dates.tons(oneunit(y)), timestamp_scale(P))
+    ticks, remainder = divrem(widen(value(y)) * timestamp_period_scale(typeof(y)), timestamp_scale(P))
     iszero(remainder) || throw(InexactError(:convert, P, y))
     return ticks
 end
@@ -506,7 +513,7 @@ end
     epoch = p isa Week ? Dates.WEEKEPOCH : Dates.DATEEPOCH
     epochns = Int128(UNIXEPOCHDAYS - epoch) * NS_PER_DAY
     x = widen(value(dt)) * timestamp_scale(typeof(dt))
-    step = widen(value(p)) * Dates.tons(oneunit(p))
+    step = widen(value(p)) * timestamp_period_scale(typeof(p))
     f = x - mod(x + epochns, step)
     return f, !upper || x == f ? f : f + step
 end
@@ -578,9 +585,12 @@ end
 
 ### Ranges
 
-Dates.guess(a::Timestamp, b::Timestamp, c) =
-    floor(Int64, div(widen(value(b)) * timestamp_scale(typeof(b)) - widen(value(a)) * timestamp_scale(typeof(a)),
-                     widen(value(c)) * Dates.tons(oneunit(c))))
+function Dates.guess(a::Timestamp, b::Timestamp, c)
+    # Calendar steps use an average length for this estimate; len corrects it below.
+    scale = c isa Union{Year,Quarter,Month} ? Dates.tons(oneunit(c)) : timestamp_period_scale(typeof(c))
+    return floor(Int64, div(widen(value(b)) * timestamp_scale(typeof(b)) - widen(value(a)) * timestamp_scale(typeof(a)),
+                            widen(value(c)) * scale))
+end
 Base.length(r::StepRange{<:Timestamp}) = isempty(r) ? Int64(0) :
     Base.Checked.checked_add(Dates.len(r.start, r.stop, r.step), Int64(1))
 
