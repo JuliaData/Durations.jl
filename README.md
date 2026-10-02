@@ -73,7 +73,7 @@ implementation is active.
 
 `Timestamp{P}` is a point in time stored as an `Int64` count since the Unix
 epoch `1970-01-01T00:00:00`, with `P` one of `Second`, `Millisecond`,
-`Microsecond`, or `Nanosecond`. It is the type proposed for the Julia 1.14
+`Microsecond`, or `Nanosecond`. It is the type added to the upcoming Julia 1.14
 Dates stdlib in [JuliaLang/julia#62994](https://github.com/JuliaLang/julia/pull/62994).
 Durations makes it available to packages on earlier Julia versions:
 

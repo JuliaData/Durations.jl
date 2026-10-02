@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.1
+
+Bring the `Timestamp{P}` compatibility implementation in line with the merged
+Julia 1.14 Dates implementation. Keep fractional-resolution arithmetic,
+calendar fields, and local clocks exact; avoid intermediate overflow in wide
+conversions, rounding, and ranges; and align resolution validation, promotion,
+Unix conversion, and subnanosecond formatting.
+
+Package-defined physical period scales must use integer or rational nanoseconds
+per unit. Floating-point scales, including `1.0`, now throw `ArgumentError`
+instead of silently losing precision. Existing integer and rational scales
+remain supported. Older Dates parsing and hashing limitations described in
+README.md still apply.
+
+Fix missing-timezone-rule error formatting so the existing safe-trim workload
+also compiles on nightly Julia.
+
 ## 1.4.0
 
 Add `Durations.ZonedTimestamp{P,Z}`: a UTC `Timestamp{P}` in the time zone named by the
