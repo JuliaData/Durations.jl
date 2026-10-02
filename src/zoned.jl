@@ -202,7 +202,8 @@ function tryoffset(zt::ZonedTimestamp{P,Z}) where {P,Z}
 end
 
 # The error messages are plain strings: printing a `Timestamp` does not compile under --trim.
-norules(Z::Symbol) = ArgumentError(string("time zone \"", String(Z), "\" has no rules for this time"))
+# Binary string calls retain concrete argument counts under --trim=safe.
+norules(Z::Symbol) = ArgumentError(string(string("time zone \"", String(Z)), "\" has no rules for this time"))
 
 # The local time as a `Timestamp{P}`
 function localtime(zt::ZonedTimestamp{P,Z}) where {P,Z}
