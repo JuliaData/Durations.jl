@@ -20,7 +20,7 @@ x = Duration(months=2, days=-3, nanoseconds=1_000)
 @assert Duration(Month(2) + Day(3)) == Duration(2, 3, 0)
 ```
 
-After registration, install with `import Pkg; Pkg.add("Durations")`.
+Install with `import Pkg; Pkg.add("Durations")`.
 Julia 1.10 and later are supported. Dates is the only runtime dependency.
 
 ## Contract
@@ -45,10 +45,10 @@ Julia 1.10 and later are supported. Dates is the only runtime dependency.
 
 ## Wire interoperability
 
-Field offsets are 0, 4, and 8 bytes. A `Vector{Duration}` is a contiguous
-coefficient buffer. Raw bytes use host endianness. Arrow adapters must honor the
-schema byte order and carry nulls in their validity bitmap. Null is `missing`,
-not a sentinel Duration.
+Field offsets are 0, 4, and 8 bytes. A `Vector{Duration}` is one contiguous
+buffer of these 16-byte values. Raw bytes use host endianness. Arrow adapters
+must honor the schema byte order and carry nulls in their validity bitmap. Null
+is `missing`, not a sentinel Duration.
 
 Parquet/Avro month-day-millisecond fields and database microsecond fields can
 scale their sub-day count into nanoseconds using checked arithmetic. The source
@@ -63,11 +63,11 @@ julia --project=test/trim -e 'using Pkg; Pkg.develop(path=pwd()); Pkg.instantiat
 julia --project=test/trim test/trim/runtests.jl
 ```
 
-CI covers Julia 1.10, 1.11, current stable, and nightly on Linux, Windows, and
-macOS. Trim CI compiles and executes a JuliaC `--trim=safe` workload. Tests check
-layout, byte round trips, overflow, mixed signs, Dates conversions, and hashing,
-and run the Dates stdlib's `Timestamp` test file against whichever
-implementation is active.
+CI covers Julia 1.10 and current stable on Linux, Windows, and macOS, and Julia
+1.11 and the latest prerelease on Linux. Trim CI compiles and executes a JuliaC
+`--trim=safe` workload. Tests check layout, byte round trips, overflow, mixed
+signs, Dates conversions, and hashing, and run the Dates stdlib's `Timestamp`
+test file against whichever implementation is active.
 
 ## Timestamp
 
@@ -183,7 +183,9 @@ at unit `P` (seconds, milliseconds, microseconds, or nanoseconds; no time zone),
 with the extension name `JuliaLang.Durations.Timestamp` so that it reads back as
 `Timestamp{P}`. A `ZonedTimestamp{P,Z}` column is the same type with time zone `String(Z)`,
 tagged `JuliaLang.Durations.ZonedTimestamp`. A reader without Durations loaded sees a
-plain Arrow timestamp column.
+plain Arrow timestamp column. Arrow.jl 2.x has no month-day-nanosecond interval type,
+so it writes a `Duration` column as a struct of the three fields, which reads back as
+named tuples.
 
 Arrow 3.x can load Durations without the legacy Arrow 2.x adapter. Its native timestamp
 mapping belongs in Arrow's reader and writer. The storage contract is:

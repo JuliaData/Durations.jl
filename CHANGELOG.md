@@ -37,6 +37,13 @@ the count width in construction, conversion, arithmetic, and rounding. The
 extension helpers are internal APIs; the built-in resolutions keep their
 existing behavior. Sub-nanosecond period types are not included in this package.
 
+## 1.2.0
+
+Add an Arrow.jl 2.8 extension that writes a `Timestamp{P}` column as Arrow's
+timestamp type at unit `P`, tagged so that it reads back as `Timestamp{P}`.
+`Timestamp{P}` constructor errors no longer print `Timestamp` values, so
+`--trim=safe` builds that reach the constructor compile.
+
 ## 1.1.0
 
 Add `Timestamp{P}`, an `Int64` count since the Unix epoch at `Second`,
