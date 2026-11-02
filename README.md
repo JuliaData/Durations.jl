@@ -106,6 +106,27 @@ period arithmetic, and rounding require exact representation and throw an
 `DateTime`. Use a concrete `Timestamp{P}` for array element types and struct
 fields.
 
+`Durations.iso2timestamp(Timestamp{P}, text)` reads an ISO 8601 date and time with an
+optional UTC offset, such as the text JSON APIs and PostgreSQL write, and returns the UTC
+time. It works with either `Timestamp` and compiles under `juliac --trim=safe`.
+`Timestamp(text)` parses with a `Dates.DateFormat`, which does not, and takes no offset.
+
+```julia
+using Durations, Dates
+
+U = Timestamp{Microsecond}
+@assert Durations.iso2timestamp(U, "2026-03-08T09:00:00.25-07:00") == U(2026, 3, 8, 16, 0, 0, 250)
+@assert Durations.iso2timestamp(U, "2026-03-08 16:00:00.123456+00") == U(2026, 3, 8, 16, 0, 0, 123, 456)
+```
+
+- The date is `YYYY-MM-DD`, with a year of 4 to 9 digits and an optional sign. The time is
+  `hh:mm:ss`, after `T`, `t`, or a space, with an optional fraction of 1 to 9 digits.
+- The offset is `Z`, `z`, `±hh`, `±hhmm`, `±hh:mm`, `±hhmmss`, or `±hh:mm:ss`, with hours
+  through 23 and minutes and seconds through 59. Text without an offset reads as UTC.
+- Date and time fields follow the by-parts constructor, so a fraction finer than `P` must end
+  in zeros. Malformed text, a field out of range, and a UTC time outside the range of
+  `Timestamp{P}` throw an `ArgumentError`.
+
 Differences on Julia versions that use the compatibility implementation:
 
 - Loading Durations registers the `n` fractional-second format code with

@@ -56,6 +56,25 @@ function (@main)(args::Vector{String})::Cint
     v = reinterpret(J, Int64[0, 1])
     v[2] - v[1] == Nanosecond(1) || return 36
     Timestamp(ceil(zt, Second)) == Timestamp(2026, 3, 8, 16, 0, 1) || return 37
+    # iso2timestamp reads text without Dates.DateFormat, including its error paths
+    U = Timestamp{Microsecond}
+    Durations.iso2timestamp(U, "2026-03-08 09:00:00.25-07:00") == U(2026, 3, 8, 16, 0, 0, 250) || return 40
+    Durations.iso2timestamp(Timestamp, SubString("x2026-03-08T16:00:00.123456789Zx", 2, 31)) ==
+        Timestamp(2026, 3, 8, 16, 0, 0, 123, 456, 789) || return 41
+    try
+        Durations.iso2timestamp(U, string("2026-03-08T16:00:00+", 24 + n, ":00"))
+        return 42
+    catch e
+        e isa ArgumentError || return 43
+        (e.msg::String) == "cannot parse \"2026-03-08T16:00:00+24:00\" as an ISO 8601 timestamp: the offset is out of range" || return 44
+    end
+    try
+        Durations.iso2timestamp(U, string("2026-03-08T16:00:00.123456", 7 + n, "Z"))
+        return 45
+    catch e
+        e isa ArgumentError || return 46
+        (e.msg::String) == "Fractional second is not exactly representable as Timestamp{Microsecond}" || return 47
+    end
     Core.println("trim workload passed")
     return 0
 end

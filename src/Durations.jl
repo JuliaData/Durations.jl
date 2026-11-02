@@ -137,10 +137,12 @@ else
 end
 
 include("zoned.jl")
+include("iso.jl")
 
 @static if VERSION >= v"1.11"
     eval(Expr(:public, :ISOTimestampFormat, :unix2timestamp, :timestamp2unix, :TIMESTAMP_FROM_DATES,
-              :ZonedTimestamp, :zonename, :astimezone, :NonExistentTimeError, :AmbiguousTimeError))
+              :ZonedTimestamp, :zonename, :astimezone, :NonExistentTimeError, :AmbiguousTimeError,
+              :iso2timestamp))
 end
 
 end
