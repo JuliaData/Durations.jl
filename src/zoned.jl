@@ -1,7 +1,7 @@
 # `ZonedTimestamp{P,Z}`: a UTC `Timestamp{P}` labeled with the time zone named `Z`.
 
 using Dates: Dates, AbstractDateTime, Date, DateTime, Time, UTC, DatePeriod, TimePeriod,
-    Second, Millisecond, Microsecond, Nanosecond
+    Second, Millisecond, Microsecond, Nanosecond, DateFormat
 
 """
     Durations.ZonedTimestamp{P,Z}
@@ -123,19 +123,20 @@ end
 localend(r::ZoneRules, i::Int) = i == length(r.starts) ?
     Int128(typemax(Int64)) + 1 : Int128(r.starts[i + 1]) + r.offsets[i]
 
-# Arrow zone names use "UTC" or "±HH:MM". Historical local-time text may also
-# carry offset seconds; enable those only while parsing a timestamp's text.
-function fixedoffset(name::AbstractString, seconds::Bool=false)
+# Arrow zone names use "UTC" or "±HH:MM". Timestamp text may also write an offset as
+# "±HH", as PostgreSQL does, or with seconds, for historical local time; accept those
+# only while parsing a timestamp's text.
+function fixedoffset(name::AbstractString, text::Bool=false)
     name == "UTC" && return Int64(0)
     b = codeunits(name)
     n = length(b)
-    (n == 6 || seconds && n == 9) && b[1] in (UInt8('+'), UInt8('-')) &&
-        b[4] == UInt8(':') && (n == 6 || b[7] == UInt8(':')) || return nothing
-    positions = n == 6 ? (2, 3, 5, 6) : (2, 3, 5, 6, 8, 9)
+    (n == 6 || text && (n == 3 || n == 9)) && b[1] in (UInt8('+'), UInt8('-')) &&
+        (n == 3 || b[4] == UInt8(':')) && (n != 9 || b[7] == UInt8(':')) || return nothing
+    positions = n == 3 ? (2, 3) : n == 6 ? (2, 3, 5, 6) : (2, 3, 5, 6, 8, 9)
     all(i -> UInt8('0') <= b[i] <= UInt8('9'), positions) || return nothing
     h = 10 * Int64(b[2] - UInt8('0')) + Int64(b[3] - UInt8('0'))
-    m = 10 * Int64(b[5] - UInt8('0')) + Int64(b[6] - UInt8('0'))
-    s = n == 6 ? Int64(0) : 10 * Int64(b[8] - UInt8('0')) + Int64(b[9] - UInt8('0'))
+    m = n == 3 ? Int64(0) : 10 * Int64(b[5] - UInt8('0')) + Int64(b[6] - UInt8('0'))
+    s = n == 9 ? 10 * Int64(b[8] - UInt8('0')) + Int64(b[9] - UInt8('0')) : Int64(0)
     h <= 23 && m <= 59 && s <= 59 || return nothing
     return (b[1] == UInt8('-') ? -1 : 1) * (3600h + 60m + s)
 end
@@ -370,26 +371,40 @@ end
 Base.typeinfo_implicit(::Type{<:ZonedTimestamp}) = true
 
 """
-    Durations.ZonedTimestamp{P,Z}(str::AbstractString)
+    Durations.ZonedTimestamp{P,Z}(str::AbstractString, df::DateFormat=ISOTimestampFormat)
 
-Parse `str` as printed: a local time, its UTC offset (`"+HH:MM"`, `"-HH:MM"`, or `"Z"` for a
-UTC time), and the zone name `Z` in brackets. The offset alone sets the UTC time; it is
-not checked against the zone's rules.
+Parse `str`: a local time in the format `df`, an optional UTC offset (`"Z"` for a UTC time,
+`"±HH"`, `"±HH:MM"`, or `"±HH:MM:SS"`), and an optional zone name `Z` in brackets. This
+reads the text `print` writes, RFC 3339 text such as `"2026-03-08T09:00:00-07:00"`, and,
+with a matching `df`, PostgreSQL text such as `"2026-03-08 16:00:00.25+00"`. The offset
+alone sets the UTC time; it is not checked against the zone's rules. Text without an
+offset is local time in the zone. An offset follows the time of day, so a sign before the
+first `:` is part of the date.
 """
-function ZonedTimestamp{P,Z}(str::AbstractString) where {P,Z}
+function ZonedTimestamp{P,Z}(str::AbstractString, df::DateFormat=ISOTimestampFormat) where {P,Z}
     bad() = ArgumentError(string("cannot parse \"", str, "\" as a ZonedTimestamp in time zone \"", Z, "\""))
-    zone = string('[', Z, ']')
-    endswith(str, zone) || throw(bad())
-    body = chop(str; tail=length(zone))
-    endswith(body, 'Z') && return ZonedTimestamp{P,Z}(Timestamp{P}(chop(body)), UTC)
-    i = findlast(c -> c == '+' || c == '-', body)
-    i === nothing && throw(bad())
+    body = SubString(str)
+    if endswith(str, ']')
+        zone = string('[', Z, ']')
+        endswith(str, zone) || throw(bad())
+        body = chop(str; tail=length(zone))
+    end
+    endswith(body, 'Z') && return ZonedTimestamp{P,Z}(Timestamp{P}(chop(body), df), UTC)
+    # An offset is a sign and the run of digits and colons that ends the text
+    b = codeunits(body)
+    i = lastindex(body)
+    while i > 0 && (UInt8('0') <= b[i] <= UInt8('9') || b[i] == UInt8(':'))
+        i -= 1
+    end
+    (i > 0 && (b[i] == UInt8('+') || b[i] == UInt8('-')) && findprev(==(UInt8(':')), b, i) !== nothing) ||
+        return ZonedTimestamp{P,Z}(Timestamp{P}(body, df))
     off = fixedoffset(SubString(body, i), true)
     off === nothing && throw(bad())
-    lt = Timestamp{P}(SubString(body, 1, prevind(body, i)))
+    lt = Timestamp{P}(SubString(body, 1, prevind(body, i)), df)
     utc = shift(lt, off, Int64(-1))
     utc === nothing && throw(OverflowError("the UTC time is outside the range of Timestamp"))
     return ZonedTimestamp{P,Z}(utc, UTC)
 end
 
-Base.parse(::Type{ZonedTimestamp{P,Z}}, str::AbstractString) where {P,Z} = ZonedTimestamp{P,Z}(str)
+Base.parse(::Type{ZonedTimestamp{P,Z}}, str::AbstractString, df::DateFormat=ISOTimestampFormat) where {P,Z} =
+    ZonedTimestamp{P,Z}(str, df)

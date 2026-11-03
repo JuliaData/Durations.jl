@@ -1,5 +1,9 @@
 using Durations, Dates
 
+# Created by the build, so it cannot use the `n` code on Julia versions that use the
+# compatibility `Timestamp` (see README.md)
+const SPACE = DateFormat("yyyy-mm-dd HH:MM:SS")
+
 function (@main)(args::Vector{String})::Cint
     x = Duration(2,-3,456)
     y = Duration(Month(1))
@@ -56,27 +60,22 @@ function (@main)(args::Vector{String})::Cint
     v = reinterpret(J, Int64[0, 1])
     v[2] - v[1] == Nanosecond(1) || return 36
     Timestamp(ceil(zt, Second)) == Timestamp(2026, 3, 8, 16, 0, 1) || return 37
-    # iso2timestamp reads text without Dates.DateFormat, including its error paths
-    U = Timestamp{Microsecond}
-    Durations.iso2timestamp(U, "2026-03-08 09:00:00.25-07:00") == U(2026, 3, 8, 16, 0, 0, 250) || return 40
-    Durations.iso2timestamp(Timestamp, SubString("x2026-03-08T16:00:00.123456789Zx", 2, 31)) ==
-        Timestamp(2026, 3, 8, 16, 0, 0, 123, 456, 789) || return 41
+    # text parsing through a Dates.DateFormat, including its error path and offsets
+    T = Timestamp{Microsecond}
+    T(string("2026-03-08T16:00:00.12345", 6 + n)) == T(2026, 3, 8, 16, 0, 0, 123, 456) || return 40
+    T(string("2026-03-08 16:00:0", n), SPACE) == T(2026, 3, 8, 16) || return 41
+    tryparse(T, string("2026-03-08T16:00:0", n, "x")) === nothing || return 42
     try
-        Durations.iso2timestamp(U, string("2026-03-08T16:00:00+", 24 + n, ":00"))
-        return 42
+        T(string("2026-03-08T16:", n, "x"))
+        return 43
     catch e
-        e isa ArgumentError || return 43
-        (e.msg::String) == "cannot parse \"2026-03-08T16:00:00+24:00\" as an ISO 8601 timestamp: the offset is out of range" || return 44
+        e isa ArgumentError || return 44
+        (e.msg::String) == "Unable to parse date time. Expected directive Delim(:) at char 16" || return 45
     end
-    try
-        Durations.iso2timestamp(U, string("2026-03-08T16:00:00.123456", 7 + n, "Z"))
-        return 45
-    catch e
-        e isa ArgumentError || return 46
-        (e.msg::String) == "Fractional second is not exactly representable as Timestamp{Microsecond}" || return 47
-    end
-    Durations.iso2timestamp(Timestamp{Millisecond}, "1969-12-31 23:59:59.999999", RoundDown) ==
-        Timestamp{Millisecond}(1969, 12, 31, 23, 59, 59, 999) || return 48
+    Z = Durations.ZonedTimestamp{Microsecond,:UTC}
+    Z(string("2026-03-08T09:00:00.25-07:0", n)) == Z(T(2026, 3, 8, 16, 0, 0, 250), UTC) || return 46
+    Timestamp(Z(string("2026-03-08 09:00:0", n, "-07"), SPACE), UTC) == T(2026, 3, 8, 16) || return 47
+    Z(string("2026-03-08T16:00:0", n)) == Z(T(2026, 3, 8, 16), UTC) || return 48
     Core.println("trim workload passed")
     return 0
 end
