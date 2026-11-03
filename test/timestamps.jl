@@ -401,6 +401,12 @@ end
     @test tryparse(Timestamp, long_nonzero_fraction) === nothing
     @test_throws ArgumentError parse(Timestamp, "3000-01-01")
     @test_throws ArgumentError Timestamp("")
+    # the error names the directive that failed and where
+    for (text, msg) in ("2026-08-31T13:4x" => "Unable to parse date time. Expected directive Delim(:) at char 16",
+                        "2026-08-31T13:45:30.1x" => "Found extra characters at the end of date time string")
+        err = try parse(Timestamp, text) catch e e end
+        @test err isa ArgumentError && err.msg == msg
+    end
     # Timestamp values format with DateTime-compatible codes
     @test Dates.format(ts, "yyyy-mm-dd HH:MM:SS.s") == "2026-08-31 13:45:30.123"
     @test Dates.format(ts, "e, dd u yyyy HH:MM:SS") == "Mon, 31 Aug 2026 13:45:30"

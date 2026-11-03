@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Parsing a `Timestamp` compiles under `juliac --trim=safe` on Julia versions that use the
+compatibility implementation. Dates' parser reads the `n` code and the `Timestamp` fields
+from tables that Durations fills from `__init__`, which a juliac build runs only when the
+built program starts. So Durations now parses a `Timestamp` with its own copy of that
+parser, which reads them from constants.
+
+`ZonedTimestamp{P,Z}(text)` and `parse` read RFC 3339 text such as
+`2026-03-08T09:00:00-07:00`: the zone in brackets is optional, an offset can also be
+`±HH`, and text without an offset is local time in the zone. Text such as
+`2026-03-08T16:00:00[UTC]`, which has no offset, used to throw. A `DateFormat` argument
+reads other layouts of the local time, such as PostgreSQL's `2026-03-08 16:00:00+00`. The
+offset handling also compiles under `juliac --trim=safe`.
+
 ## 1.4.1
 
 Bring the `Timestamp{P}` compatibility implementation in line with the merged

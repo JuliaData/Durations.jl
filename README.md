@@ -114,6 +114,10 @@ Differences on Julia versions that use the compatibility implementation:
   Parsing a `DateTime` or `Time` with `n` is unreliable before Julia 1.14: a
   `DateTime` format drops the fraction and a `Time` rejects sub-millisecond
   digits. Parse a `Timestamp` and convert instead.
+- Parsing a `Timestamp` compiles under `juliac --trim=safe`. A juliac build registers
+  `n` only when the built program starts, so a `DateFormat` that the build itself
+  creates, such as a `dateformat"..."` literal in the program's script, reads `n` as a
+  literal letter. Create formats that use `n` inside a package.
 - `hash` agrees with `==` between `Timestamp` and `DateTime`, and across
   `Timestamp` resolutions. Equal `Date` and `Timestamp` values hash differently,
   as equal `Date` and `DateTime` values already do on these versions.
@@ -139,6 +143,8 @@ zt = Jakarta(Timestamp(2026, 3, 8, 16, 0))                # 16:00 local time
 @assert hour(zt) == 16 && zt + Day(1) == zt + Hour(24)
 @assert string(zt) == "2026-03-08T16:00:00+07:00[+07:00]"
 @assert reinterpret(Jakarta, [Dates.value(zt.utc)]) == [zt]  # an Arrow buffer, in place
+@assert Jakarta("2026-03-08T09:00:00Z") == zt                # RFC 3339 text
+@assert Jakarta("2026-03-08 09:00:00+00", DateFormat("yyyy-mm-dd HH:MM:SS.n")) == zt
 ```
 
 - `ZonedTimestamp{P,Z}` has the 8 bytes of its UTC `Timestamp{P}`, and every `Int64` is a
@@ -159,8 +165,11 @@ zt = Jakarta(Timestamp(2026, 3, 8, 16, 0))                # 16:00 local time
   `occurrence=1` or `occurrence=2` picks one; a skipped local time throws
   `Durations.NonExistentTimeError`. Adding a day or month can land on one.
 - `print` writes the local time, its offset, and the zone in brackets, such as
-  `2026-11-01T01:30:00-07:00[America/Denver]`. The constructor parses that text; the offset
-  alone sets the UTC time.
+  `2026-11-01T01:30:00-07:00[America/Denver]`. The constructor parses that text and RFC 3339
+  text such as `2026-11-01T01:30:00-07:00`. A `DateFormat` argument reads other layouts of
+  the local time, such as PostgreSQL's `2026-11-01 08:30:00+00`. The offset is `Z`, `±HH`,
+  `±HH:MM`, or `±HH:MM:SS`, and it alone sets the UTC time. Text without an offset is local
+  time in the zone.
 - Parsing checks offset fields and UTC overflow. Time-period rounding uses the current
   offset to preserve repeated hours and throws if the rounded UTC value is out of range.
   `repr` uses a raw-count constructor that also works with older Dates parsers.
