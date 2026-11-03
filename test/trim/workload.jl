@@ -75,6 +75,8 @@ function (@main)(args::Vector{String})::Cint
         e isa ArgumentError || return 46
         (e.msg::String) == "Fractional second is not exactly representable as Timestamp{Microsecond}" || return 47
     end
+    Durations.iso2timestamp(Timestamp{Millisecond}, "1969-12-31 23:59:59.999999", RoundDown) ==
+        Timestamp{Millisecond}(1969, 12, 31, 23, 59, 59, 999) || return 48
     Core.println("trim workload passed")
     return 0
 end

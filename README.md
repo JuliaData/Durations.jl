@@ -124,8 +124,9 @@ U = Timestamp{Microsecond}
 - The offset is `Z`, `z`, `±hh`, `±hhmm`, `±hh:mm`, `±hhmmss`, or `±hh:mm:ss`, with hours
   through 23 and minutes and seconds through 59. Text without an offset reads as UTC.
 - Date and time fields follow the by-parts constructor, so a fraction finer than `P` must end
-  in zeros. Malformed text, a field out of range, and a UTC time outside the range of
-  `Timestamp{P}` throw an `ArgumentError`.
+  in zeros. `Durations.iso2timestamp(Timestamp{P}, text, RoundDown)` drops those digits
+  instead, flooring the time. Malformed text, a field out of range, and a UTC time outside
+  the range of `Timestamp{P}` throw an `ArgumentError`.
 
 Differences on Julia versions that use the compatibility implementation:
 

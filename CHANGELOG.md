@@ -4,9 +4,10 @@
 
 Add `Durations.iso2timestamp(Timestamp{P}, text)`. It reads ISO 8601 text with a `T` or
 space separator, up to nine fraction digits, and an optional `Z`, `±hh`, `±hhmm`, `±hh:mm`,
-or `±hh:mm:ss` offset, and returns the UTC time. Unlike `Timestamp(text)`, it accepts an
-offset and compiles under `juliac --trim=safe`. It works with both the `Dates` and the
-compatibility `Timestamp`. See README.md.
+or `±hh:mm:ss` offset, and returns the UTC time. With `RoundDown`, fraction digits finer
+than the resolution floor the time instead of throwing. Unlike `Timestamp(text)`, it
+accepts an offset and compiles under `juliac --trim=safe`. It works with both the `Dates`
+and the compatibility `Timestamp`. See README.md.
 
 ## 1.4.1
 

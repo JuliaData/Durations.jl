@@ -60,6 +60,22 @@ using Durations: iso2timestamp
         @test_throws ArgumentError iso2timestamp(Timestamp, "1677-09-21T00:12:43.145224192+01:00")
     end
 
+    @testset "RoundDown" begin
+        # digits finer than the resolution floor the time instead of throwing
+        @test iso2timestamp(Timestamp{Millisecond}, "1969-12-31 23:59:59.999999", RoundDown) ==
+              Timestamp{Millisecond}(1969, 12, 31, 23, 59, 59, 999)
+        @test iso2timestamp(Timestamp{Second}, "2026-03-08T16:00:00.999Z", RoundDown) == Timestamp{Second}(2026, 3, 8, 16)
+        @test iso2timestamp(Timestamp{Millisecond}, "294276-12-31 23:59:59.999999+00", RoundDown) ==
+              Timestamp{Millisecond}(294276, 12, 31, 23, 59, 59, 999)
+        @test iso2timestamp(Timestamp, "2026-03-08T16:00:00.123456789Z", RoundDown) ===
+              Timestamp(2026, 3, 8, 16, 0, 0, 123, 456, 789)
+        @test iso2timestamp(U, "2026-03-08T09:00:00.0000009-07:00", RoundDown) === noon
+        # flooring changes nothing else: bad text and ranges still throw
+        @test_throws ArgumentError iso2timestamp(U, "2026-03-08T16:00:00+24:00", RoundDown)
+        @test_throws ArgumentError iso2timestamp(Timestamp, "2262-04-11T23:47:16.854775807-01:00", RoundDown)
+        @test_throws MethodError iso2timestamp(U, "2026-03-08T16:00:00.5Z", RoundUp)
+    end
+
     @testset "Round trips" begin
         for ts in (noon, noon + Microsecond(1), U(1), U(10000, 12, 31, 23, 59, 59, 999, 999))
             @test iso2timestamp(U, string(ts, "Z")) === ts

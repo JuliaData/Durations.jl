@@ -1,6 +1,6 @@
 """
-    Durations.iso2timestamp(Timestamp{P}, text::AbstractString)::Timestamp{P}
-    Durations.iso2timestamp(Timestamp, text::AbstractString)::Timestamp{Nanosecond}
+    Durations.iso2timestamp(Timestamp{P}, text::AbstractString[, RoundDown])::Timestamp{P}
+    Durations.iso2timestamp(Timestamp, text::AbstractString[, RoundDown])::Timestamp{Nanosecond}
 
 Parse an ISO 8601 date and time of day with an optional UTC offset, and return
 the UTC time. This reads the text that JSON APIs and PostgreSQL write, such as
@@ -15,7 +15,8 @@ the UTC time. This reads the text that JSON APIs and PostgreSQL write, such as
 Text without an offset is read as UTC. An `ArgumentError` reports anything
 else: other text, a date or time field out of range, an offset hour past 23 or
 an offset minute or second past 59, a fraction finer than `P` (trailing zeros
-are fine), or a UTC time outside the range of `Timestamp{P}`.
+are fine), or a UTC time outside the range of `Timestamp{P}`. With `RoundDown`,
+fraction digits finer than `P` are dropped instead, flooring the time.
 
 `Timestamp(text)` takes no offset and parses with a `Dates.DateFormat`, which
 does not compile under `juliac --trim=safe`. `iso2timestamp` reads the text's
@@ -29,6 +30,11 @@ julia> Durations.iso2timestamp(Timestamp{Microsecond}, "2026-03-08 09:00:00.25-0
 function iso2timestamp end
 
 iso2timestamp(::Type{Timestamp}, text::AbstractString) = iso2timestamp(Timestamp{Dates.Nanosecond}, text)
+iso2timestamp(::Type{Timestamp}, text::AbstractString, ::RoundingMode{:Down}) =
+    iso2timestamp(Timestamp{Dates.Nanosecond}, text, RoundDown)
+iso2timestamp(::Type{Timestamp{P}}, text::AbstractString) where {P} = parseiso(Timestamp{P}, text, false)
+iso2timestamp(::Type{Timestamp{P}}, text::AbstractString, ::RoundingMode{:Down}) where {P} =
+    parseiso(Timestamp{P}, text, true)
 
 @inline isodigit(b::UInt8) = UInt8('0') <= b <= UInt8('9')
 
@@ -51,7 +57,7 @@ end
 @noinline isoerror(text::AbstractString, why::String) =
     throw(ArgumentError(string("cannot parse \"", text, "\" as an ISO 8601 timestamp: ", why)))
 
-function iso2timestamp(::Type{Timestamp{P}}, text::AbstractString) where {P}
+function parseiso(::Type{Timestamp{P}}, text::AbstractString, round_down::Bool) where {P}
     b = codeunits(text)
     n = length(b)
     i = 1
@@ -117,6 +123,10 @@ function iso2timestamp(::Type{Timestamp{P}}, text::AbstractString) where {P}
         offset = sign * (3600 * offset_hours + 60 * offset_minutes + offset_seconds)
     end
     i == n + 1 || isoerror(text, "unexpected text after the time")
+    if round_down
+        per_second = ticks_per_second(P)
+        per_second < 1_000_000_000 && (fraction -= fraction % (1_000_000_000 ÷ per_second))
+    end
     milliseconds, rest = divrem(fraction, 1_000_000)
     microseconds, nanoseconds = divrem(rest, 1_000)
     clock = Timestamp{P}(year, month, day, hour, minute, second, milliseconds, microseconds, nanoseconds)
