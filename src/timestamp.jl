@@ -596,15 +596,11 @@ Base.length(r::StepRange{<:Timestamp}) = isempty(r) ? Int64(0) :
 
 ### Parsing and formatting: the `n` fractional-second code
 
-# Register the `n` code and the Timestamp token order with Dates. These are
-# mutations of Dates globals, so they run both at load time (for precompiled
-# constants below) and again from `__init__` in every session.
-const TIMESTAMP_TOKENS = (Year, Month, Day, Hour, Minute, Second, Millisecond, Microsecond, Nanosecond, Dates.AMPM)
+# Register the `n` code with Dates, so `DateFormat` reads it as a directive. This
+# mutates a Dates global, so it runs both at load time (for precompiled constants
+# below) and again from `__init__` in every session.
 function register_dates_hooks!()
     Dates.CONVERSION_SPECIFIERS['n'] = Nanosecond
-    for T in (Timestamp, Timestamp{Second}, Timestamp{Millisecond}, Timestamp{Microsecond}, Timestamp{Nanosecond})
-        Dates.CONVERSION_TRANSLATIONS[T] = TIMESTAMP_TOKENS
-    end
     return nothing
 end
 register_dates_hooks!()
@@ -635,6 +631,127 @@ end
 # the ninth must be zero.
 @inline function Dates.tryparsenext(d::Dates.DatePart{'n'}, str, i, len)
     return tryparsenext_fraction(d, str, i, len, 9)
+end
+
+# Dates' generated parser looks up each format code's field in
+# `Dates.CONVERSION_SPECIFIERS` and each result type's fields in
+# `Dates.CONVERSION_TRANSLATIONS`. Durations can add `n` and `Timestamp` to those
+# tables only from `__init__`, which a juliac build runs when the built program starts,
+# after the trim compile has generated the parser. So a `Timestamp` parses through these
+# copies of the stdlib's `tryparsenext_core` and `tryparsenext_internal`, which take `n`
+# and the `Timestamp` fields from constants.
+const TIMESTAMP_TOKENS = (Year, Month, Day, Hour, Minute, Second, Millisecond, Microsecond, Nanosecond, Dates.AMPM)
+timestamp_token(letter::Char) = letter == 'n' ? Nanosecond : Dates.CONVERSION_SPECIFIERS[letter]
+
+@generated function tryparsenext_core(str::AbstractString, pos::Int, len::Int,
+                                      df::DateFormat, raise::Bool=false)
+    directives = Dates._directives(df)
+    letters = Dates.character_codes(directives)
+
+    tokens = Type[timestamp_token(letter) for letter in letters]
+    value_names = Symbol[Dates.genvar(t) for t in tokens]
+    value_defaults = Any[Dates.CONVERSION_DEFAULTS[t] for t in tokens]
+
+    # Pre-assign variables to defaults. Allows us to use `@goto done` without worrying about
+    # unassigned variables.
+    assign_defaults = Expr[]
+    for (name, default) in zip(value_names, value_defaults)
+        push!(assign_defaults, quote
+            $name = $default
+        end)
+    end
+
+    vi = 1
+    parsers = Expr[]
+    for i = 1:length(directives)
+        if directives[i] <: Dates.DatePart
+            name = value_names[vi]
+            vi += 1
+            push!(parsers, quote
+                pos > len && @goto done
+                let val = Dates.tryparsenext(directives[$i], str, pos, len, locale)
+                    val === nothing && @goto error
+                    $name, pos = val
+                end
+                num_parsed += 1
+                directive_index += 1
+            end)
+        else
+            push!(parsers, quote
+                pos > len && @goto done
+                let val = Dates.tryparsenext(directives[$i], str, pos, len, locale)
+                    val === nothing && @goto error
+                    delim, pos = val
+                end
+                directive_index += 1
+            end)
+        end
+    end
+
+    # The error message prints the directive that failed. Each one is printed at its own
+    # type: indexing the mixed-type tuple at a runtime position would need dynamic dispatch.
+    directive_strings = Expr(:tuple, (:(string(directives[$i])) for i in 1:length(directives))...)
+
+    return quote
+        directives = df.tokens
+        locale::Dates.DateLocale = df.locale
+
+        num_parsed = 0
+        directive_index = 1
+
+        $(assign_defaults...)
+        $(parsers...)
+
+        pos > len || @goto error
+
+        @label done
+        return $(Expr(:tuple, value_names...)), pos, num_parsed
+
+        @label error
+        if raise
+            if directive_index > length(directives)
+                throw(ArgumentError("Found extra characters at the end of date time string"))
+            else
+                d = $directive_strings[directive_index]
+                throw(ArgumentError("Unable to parse date time. Expected directive $d at char $pos"))
+            end
+        end
+        return nothing
+    end
+end
+
+@generated function Dates.tryparsenext_internal(::Type{T}, str::AbstractString, pos::Int, len::Int,
+                                                df::DateFormat, raise::Bool=false) where {T<:Timestamp}
+    letters = Dates.character_codes(df)
+
+    tokens = Type[timestamp_token(letter) for letter in letters]
+    value_names = Symbol[Dates.genvar(t) for t in tokens]
+
+    output_tokens = TIMESTAMP_TOKENS
+    output_names = Symbol[Dates.genvar(t) for t in output_tokens]
+    output_defaults = Any[Dates.CONVERSION_DEFAULTS[t] for t in output_tokens]
+
+    # Pre-assign output variables to defaults. Ensures that all output variables are
+    # assigned as the value tuple returned from `tryparsenext_core` may not include all
+    # of the required variables.
+    assign_defaults = Expr[
+        quote
+            $name = $default
+        end
+        for (name, default) in zip(output_names, output_defaults)
+    ]
+
+    # Unpacks the value tuple returned by `tryparsenext_core` into separate variables.
+    value_tuple = Expr(:tuple, value_names...)
+
+    return quote
+        val = tryparsenext_core(str, pos, len, df, raise)
+        val === nothing && return nothing
+        values, pos, num_parsed = val
+        $(assign_defaults...)
+        $value_tuple = values
+        return $(Expr(:tuple, output_names...)), pos
+    end
 end
 
 function format_fraction(io, d::Dates.DatePart, val, precision)

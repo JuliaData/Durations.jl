@@ -95,7 +95,22 @@ const PARSES_NEGATIVE_YEARS = tryparse(DateTime, "-0001-01-01", dateformat"yyyy-
               "2026-03-08T16:00:00+07:30[+07:30]"
         @test string(ZonedTimestamp{Second,:UTC}(Timestamp{Second}(2026), UTC)) == "2026-01-01T00:00:00+00:00[UTC]"
         @test_throws ArgumentError ZonedTimestamp{Nanosecond,:UTC}("2026-03-08T16:00:00+07:30[+07:30]")
-        @test_throws ArgumentError ZonedTimestamp{Nanosecond,:UTC}("2026-03-08T16:00:00[UTC]")
+        # the zone in brackets and the offset are optional; text without an offset is local time
+        U, J = ZonedTimestamp{Microsecond,:UTC}, ZonedTimestamp{Microsecond,Symbol("+07:00")}
+        utc = U(Timestamp{Microsecond}(2026, 3, 8, 16), UTC)
+        for text in ("2026-03-08T16:00:00[UTC]", "2026-03-08T16:00:00", "2026-03-08T16:00:00Z",
+                     "2026-03-08T09:00:00-07:00", "2026-03-08T09:00:00-07", "2026-03-08T21:30:00+05:30")
+            @test U(text) == utc && parse(U, text) == utc
+        end
+        @test J("2026-03-08T23:00:00") == utc
+        @test U("2026-03-08") == U(Timestamp{Microsecond}(2026, 3, 8), UTC)  # the date's signs are not offsets
+        PARSES_NEGATIVE_YEARS && @test ZonedTimestamp{Second,:UTC}("-0001-12-31T23:59:59-01:00") ==
+                                       ZonedTimestamp{Second,:UTC}(Timestamp{Second}(0, 1, 1, 0, 59, 59), UTC)
+        # a DateFormat for the local time, such as PostgreSQL's
+        pg = DateFormat("yyyy-mm-dd HH:MM:SS.n")
+        @test U("2026-03-08 09:00:00.25-07", pg) == utc + Millisecond(250)
+        @test U("2026-03-08 16:00:00", pg) == utc
+        @test parse(U, "1900-01-01 00:00:00+05:53:28", pg) == U(Timestamp{Microsecond}(1899, 12, 31, 18, 6, 32), UTC)
         # the local time of the largest value is out of range, so it prints as UTC
         mx = ZonedTimestamp{Nanosecond,Symbol("+07:00")}(typemax(Timestamp), UTC)
         @test string(mx) == "2262-04-11T23:47:16.854775807Z[+07:00]"
@@ -105,7 +120,7 @@ const PARSES_NEGATIVE_YEARS = tryparse(DateTime, "-0001-01-01", dateformat"yyyy-
 
     @testset "Invalid input and rounding limits" begin
         U = ZonedTimestamp{Nanosecond,:UTC}
-        for offset in ("+24:00", "-00:60", "+99:99", "+00:00:60", "+0:00", "+０1:00")
+        for offset in ("+24:00", "-00:60", "+99:99", "+00:00:60", "+0:00", "+０1:00", "+24", "+7", "+07:0")
             @test_throws ArgumentError U("2026-01-01T00:00:00" * offset * "[UTC]")
         end
         @test U("2026-01-01T00:00:30+00:00:30[UTC]") == U(2026)
